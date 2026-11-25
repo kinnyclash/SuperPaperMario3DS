@@ -4,18 +4,20 @@ Status is written as tested, untested, or unverified. **Both 3DS apps now compil
 
 ## Status at a glance
 
-- Host tests: 254, all passing (Python 3.12 in CI, 3.13 locally). The LLVM encoding test now runs where `llvm-mc` is installed.
+- Host tests: 275, all passing (Python 3.12 in CI, 3.13 locally). The LLVM encoding test now runs where `llvm-mc` is installed.
 - 3DS build: CI builds `spm3ds.3dsx` (CPU app) and `spm3ds_gfx.3dsx` (graphics app) with devkitARM r68, libctru 2.7.1 and citro3d 1.7.1, with `-Werror`. Download them from the run's artifacts.
 - PowerPC: the base set plus overflow (OE) forms with XER.OV/SO, CR logic, `mtcrf`/`mcrf`/`mcrxr`, byte-reversed and multiple-word memory ops, every indexed/update form, FP `fres`/`frsqrte`/`fsel`/`fctiw`/FPSCR moves, and the remaining paired singles. See `docs/PPC_COVERAGE.md`.
 - GX: real register decoding from libogc's layouts (VCD, VAT, arrays, matrices, projection, viewport, cull, Z/blend mode, TEV), indexed vertices and display lists, in Python and in C.
 - **Translated code drives the GPU**: stores to the write-gather pipe are captured (`runtime/hw.c`), decoded by the C command processor (`runtime/gx_cp.c`) and drawn with citro3d. The graphics app shows a cube drawn this way (press A to switch to the native cube).
-- Wii OS: heap, timers, sandboxed files, and now DVD file access through the disc's file table (`runtime/dvd.c`).
-- Diagnostics (CPU app, press Y): memory, New 3DS detection, tick rate, the synthetic benchmark and a mixed integer/memory/branch/FP/paired-single benchmark checked against the interpreter.
-- Not done: Wii OS threads, message queues and alarms; NDSP audio output; running on hardware; analysis of the real Super Paper Mario `main.dol`.
+- GX textures: texture maps from BP registers, C decoders for every non-palette format, upload to citro3d with a cache. The translated demo cube is textured through GX.
+- Wii OS: heap, timers, sandboxed files, DVD file access through the disc's file table (`runtime/dvd.c`), and threads, message queues, mutexes, condition variables and alarms (`runtime/os_thread.c`).
+- Audio: NDSP output at 32 kHz from a ring buffer; X in the CPU app plays a test tone.
+- Diagnostics (CPU app, press Y): memory, New 3DS detection, tick rate, the synthetic benchmark and a mixed integer/memory/branch/FP/paired-single benchmark checked against the interpreter. The 3DS builds count instructions per basic block (exact totals, cheap).
+- Not done: running on hardware; analysis of the real Super Paper Mario `main.dol`; TEV beyond stage 0 on the 3DS; hardware status registers; Wii Remote input in the app.
 
 ## Milestone 2026-11-25: first real 3DS builds and the GX pipeline
 
-Work is in stacked pull requests: #1 → #2 → #4 → #5 → #6 → #7 (and this documentation).
+Work is in stacked pull requests: #1 → #2 → #4 → #5 → #6 → #7 → #8 → #10 → #11 → #12 (and this documentation).
 
 1. **CI (#1).** The workflow was missing from the first upload; restored. Host tests failed on Python 3.12 because `math.fma` is new in 3.13; an exact fallback (fractions, one rounding) matches `math.fma` bit for bit. The first devkitARM build reported two format warnings (`%u` with newlib's `uint32_t`, which is `unsigned long`); fixed, and CI now uses `-Werror`. `tools/check_3ds_syntax.py` type-checks the 3DS sources with clang for ARM against the real libctru/citro3d headers when devkitARM is not installed.
 2. **PowerPC (#2).** `spm3ds/ppc_ext.py` holds decoder, interpreter rule and C translation side by side for each new instruction. Tests: hand-computed results plus interpreter-versus-C on random programs and FP/paired operand vectors.
@@ -23,10 +25,16 @@ Work is in stacked pull requests: #1 → #2 → #4 → #5 → #6 → #7 (and thi
 4. **PowerPC to GX (#5).** MMIO hook, FIFO capture, C command processor, generated guest demo (`tools/make_gx_demo.py`), citro3d scene. The whole chain is checked on the host: interpreter and compiled C agree on every FIFO byte and every triangle.
 5. **Benchmark (#6).** `tools/make_benchmark.py`; about 22.5 guest instructions per iteration; the console checks the result before timing it.
 6. **DVD (#7).** `DVDOpen`, `DVDFastOpen`, `DVDConvertPathToEntrynum`, `DVDReadPrio`, `DVDReadAsyncPrio` and friends, with FST lookup and a sandboxed root. The `DVDFileInfo` offsets are unverified and kept in one table.
+7. **Diagnostic levels (#8).** `SPM3DS_DIAG_LEVEL`: per instruction (host default), per basic block (3DS default; identical counts, under 2% cost on the host), or off.
+8. **Threads (#10).** One host thread per guest thread, a baton so one runs at a time, highest priority first; messages, recursive mutexes, condition variables, one-shot and periodic alarms (fired like interrupts); deadlocks reported. Event order is tested against the scheduling rules.
+9. **Textures (#11).** BP texture registers, C texture decoders matching Python byte for byte, material batches from TEV stage 0, upload to citro3d. PICA RGBA8 byte order is now A,B,G,R (reasoned from citro3d's render-to-texture support).
+10. **Audio (#12).** NDSP stereo PCM16 at 32 kHz; test tone on X. Needs `sdmc:/3ds/dspfirm.cdc` on the console.
 
 Assumptions to check on the console (all listed where they are used):
-- Graphics: GX clip-space depth and the top-screen tilt in `gx_scene.c`; texture byte order and tiling in `tiling.c`.
+- Graphics: GX clip-space depth and the top-screen tilt in `gx_scene.c`; texture byte order, row order and tiling in `tiling.c`.
 - DVD: `DVDFileInfo` offsets in `runtime/dvd.h`.
+- Threads: SDK argument orders in `runtime/os_thread.h`.
+- Audio: whether NDSP starts (needs the DSP firmware dump) and whether the tone is clean.
 
 ## Earlier milestone: practical execution
 
@@ -131,5 +139,5 @@ Not done in this milestone (listed in the request, not started):
 
 1. Download `spm3ds-3dsx` and `spm3ds-gfx-3dsx` from the latest successful GitHub Actions run (or build with `tools\windows\build.bat`), copy them to `sdmc:/3ds/`, and start them from the Homebrew Launcher.
 2. Graphics app: say whether both cubes appear, rotate, look solid (not inside out) and have the right colours. Press A to switch.
-3. CPU app: press Y and send the diagnostic output (memory, tick rate, both benchmarks and their PASS/FAIL lines).
+3. CPU app: press Y and send the diagnostic output (memory, tick rate, both benchmarks and their PASS/FAIL lines). Press X and say whether you hear a steady tone.
 4. Analyse your `main.dol` with `tools\windows\diagnose.bat` and send the report (it contains no game bytes).

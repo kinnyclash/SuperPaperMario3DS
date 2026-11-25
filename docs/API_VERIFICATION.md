@@ -31,7 +31,12 @@ Paths are relative to the cloned repository root.
 | `GSPGPU_FlushDataCache` | `source/gfx/gx_scene.c` | `libctru/libctru/include/3ds/services/gspgpu.h` |
 | `KEY_A`, `KEY_START` | `source/gfx/main.c` | `libctru/libctru/include/3ds/services/hid.h` |
 | `GPU_REPLACE`, `GPU_PRIMARY_COLOR` | `source/gfx/gx_scene.c` | `libctru/libctru/include/3ds/gpu/enums.h` |
-| `ndsp*` (audio) | not yet used | **not written yet** |
+| `ndspInit`, `ndspExit`, `ndspSetOutputMode`, `NDSP_OUTPUT_STEREO` | `source/cpu/audio_ndsp.c` | `libctru/libctru/include/3ds/ndsp/ndsp.h` |
+| `ndspChnReset`, `ndspChnSetInterp`, `ndspChnSetRate`, `ndspChnSetFormat`, `ndspChnSetMix`, `ndspChnWaveBufAdd`, `ndspChnWaveBufClear`, `NDSP_INTERP_LINEAR`, `NDSP_FORMAT_STEREO_PCM16` | same | `libctru/libctru/include/3ds/ndsp/channel.h` |
+| `ndspWaveBuf` (`data_vaddr`, `data_pcm16`, `nsamples` in frames, `status`), `NDSP_WBUF_FREE`, `NDSP_WBUF_DONE` | same | `ndsp/ndsp.h`; frame counting as in 3ds-examples `audio/filters` |
+| `DSP_FlushDataCache` | same | `libctru/libctru/include/3ds/services/dsp.h` |
+| `threadCreate`, `threadExit`, `LightLock_*`, `CondVar_Init`, `CondVar_Wait`, `CondVar_WakeUp`, `svcSleepThread` | `runtime/os_thread.c` (3DS branch) | `libctru/libctru/include/3ds/thread.h`, `synchronization.h`, `svc.h` |
+| `C3D_TexSetWrap`, `GPU_CLAMP_TO_EDGE`, `GPU_REPEAT`, `GPU_MIRRORED_REPEAT` | `source/gfx/gx_scene.c` | `citro3d/include/c3d/texture.h`, `libctru/.../gpu/enums.h` |
 
 Header paths in this document were confirmed by grep in the cloned repositories. Only
 `DVLB_Free` was not located by name in its own header.
