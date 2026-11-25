@@ -238,8 +238,10 @@ class FloatingSignAndCompare(unittest.TestCase):
 
 
 class RejectedForms(unittest.TestCase):
-    def test_overflow_recording_forms_are_rejected(self):
-        for xo in (10, 8, 138, 136, 75):
+    def test_multiply_high_has_no_overflow_form(self):
+        # OE forms of the carry instructions are supported (see test_ppc_ext.py); mulhw and
+        # mulhwu have no OE form, so OE=1 stays invalid.
+        for xo in (75, 11):
             with self.subTest(xo=xo):
                 with self.assertRaises(Unsupported):
                     decode(enc_xo(31, 7, 3, 4, 1, xo), 0x80003000)

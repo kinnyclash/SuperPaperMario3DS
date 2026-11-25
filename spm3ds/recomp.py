@@ -26,6 +26,7 @@ from .memory import MemoryMap
 from .ppc import (CARRY_OPS, D_MEM_LOAD, D_MEM_STORE, INT_BINARY, INT_UNARY, LOGICAL_OPS, M32,
                   PS_MERGE, PS_OPS, SPR_CTR, SPR_GQR0, SPR_LR, UNARY_FROM_RA, UPDATE_FORMS,
                   X_MEM_LOAD, X_MEM_STORE, mask32)
+from .ppc_ext import EXT_OPS, ext_lines
 
 # Paired-single arithmetic as C expressions on doubles. {a}, {b}, {c} are the lane operands.
 PS_ARITH_C = {
@@ -89,7 +90,7 @@ def _cond(insn):
 
 def _rc(insn, dst):
     if insn.rc:
-        return [f"c->cr = ppc_cmp_s(c->cr, 0u, (int32_t){_r(dst)}, 0);"]
+        return [f"c->cr = ppc_cmp_s(c->cr, 0u, (int32_t){_r(dst)}, 0, c->xer);"]
     return []
 
 
@@ -150,6 +151,8 @@ def _data_lines(insn):
     """C statements for a non-branch instruction."""
     op = insn.op
     rd, ra, rb = insn.rd, insn.ra, insn.rb
+    if op in EXT_OPS:
+        return ext_lines(insn)
     if op in PS_OPS or op in ("psq_l", "psq_lu", "psq_st", "psq_stu"):
         return _paired_lines(insn)
     if op in INT_BINARY:
@@ -192,13 +195,13 @@ def _data_lines(insn):
             lines = [f"{_r(ra)} = {rot} & {_lit(m)};"]
         return lines + _rc(insn, ra)
     if op == "cmp":
-        return [f"c->cr = ppc_cmp_s(c->cr, {insn.crf}u, (int32_t){_r(ra)}, (int32_t){_r(rb)});"]
+        return [f"c->cr = ppc_cmp_s(c->cr, {insn.crf}u, (int32_t){_r(ra)}, (int32_t){_r(rb)}, c->xer);"]
     if op == "cmpl":
-        return [f"c->cr = ppc_cmp_u(c->cr, {insn.crf}u, {_r(ra)}, {_r(rb)});"]
+        return [f"c->cr = ppc_cmp_u(c->cr, {insn.crf}u, {_r(ra)}, {_r(rb)}, c->xer);"]
     if op == "cmpi":
-        return [f"c->cr = ppc_cmp_s(c->cr, {insn.crf}u, (int32_t){_r(ra)}, (int32_t)({insn.imm}));"]
+        return [f"c->cr = ppc_cmp_s(c->cr, {insn.crf}u, (int32_t){_r(ra)}, (int32_t)({insn.imm}), c->xer);"]
     if op == "cmpli":
-        return [f"c->cr = ppc_cmp_u(c->cr, {insn.crf}u, {_r(ra)}, {_lit(insn.imm)});"]
+        return [f"c->cr = ppc_cmp_u(c->cr, {insn.crf}u, {_r(ra)}, {_lit(insn.imm)}, c->xer);"]
     if op == "mfcr":
         return [f"{_r(rd)} = c->cr;"]
     if op == "mfspr":
@@ -384,13 +387,17 @@ def generate_c(image, entry, external_names=None, strict=True, seeds=(), jump_ta
     return "\n".join(out) + "\n"
 
 
-def harness_source(entry, memmap, init=(), dumps=()):
+def harness_source(entry, memmap, init=(), dumps=(), includes=(), before=(), after=()):
     """A C main() that runs `entry` on a fresh context and prints the final state.
 
     `memmap` supplies the regions. `init` is a list of (address, bytes) written before the
     run. `dumps` is a list of (address, length) printed after the run as "m ADDR BYTES".
+    `includes` are extra headers; `before` and `after` are C statements run before the guest
+    entry and after the state is printed (the context is `c`).
     """
-    lines = ["#include <stdio.h>", "#include <string.h>", '#include "ppc_ctx.h"', ""]
+    lines = ["#include <stdio.h>", "#include <string.h>", '#include "ppc_ctx.h"']
+    lines += [f'#include "{h}"' for h in includes]
+    lines.append("")
     for i, region in enumerate(memmap.regions):
         lines.append(f"static uint8_t region_{i}[{region.size}];")
     lines.append("int main(void) {")
@@ -405,15 +412,17 @@ def harness_source(entry, memmap, init=(), dumps=()):
         values = ", ".join(f"0x{b:02X}" for b in data)
         lines.append(f"    {{ static const uint8_t init_{k}[] = {{ {values} }}; "
                      f"memcpy(ppc_ptr(&c, 0x{address:08X}u, {len(data)}), init_{k}, {len(data)}); }}")
+    lines += [f"    {stmt}" for stmt in before]
     lines.append(f"    {fn_name(entry)}(&c);")
     lines.append('    for (int i = 0; i < 32; i++) printf("r%d %08x\\n", i, (unsigned)c.r[i]);')
     lines.append('    for (int i = 0; i < 32; i++) printf("f%d %016llx\\n", i, (unsigned long long)c.f[i]);')
     lines.append('    printf("lr %08x\\nctr %08x\\ncr %08x\\n", (unsigned)c.lr, (unsigned)c.ctr, (unsigned)c.cr);')
-    lines.append('    printf("xer %08x\\n", (unsigned)(c.xer & 0x20000000u));')
+    lines.append('    printf("xer %08x\\n", (unsigned)(c.xer & 0xE0000000u));')
     for address, length in dumps:
         lines.append(f"    {{ const uint8_t *p = ppc_ptr(&c, 0x{address:08X}u, {length}); "
                      f'printf("m %08x", 0x{address:08X}u); '
                      f'for (unsigned i = 0; i < {length}; i++) printf(" %02x", p[i]); printf("\\n"); }}')
+    lines += [f"    {stmt}" for stmt in after]
     lines.append("    return 0;")
     lines.append("}")
     return "\n".join(lines) + "\n"
