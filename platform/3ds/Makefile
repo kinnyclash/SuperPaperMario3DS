@@ -2,7 +2,8 @@
 #
 # Two apps share this file:
 #   make APP=cpu   -> spm3ds.3dsx      CPU demo: translated PowerPC, diagnostics, NDSP tone
-#   make APP=gfx   -> spm3ds_gfx.3dsx  Graphics demo: textured, rotating cube (citro3d)
+#   make APP=gfx   -> spm3ds_gfx.3dsx  Graphics demo: textured cube (citro3d), and a cube drawn
+#                                      by translated PowerPC code through GX (press A)
 # Default: APP=cpu.
 #
 # Structure follows devkitPro's examples (3ds-examples/templates/application/Makefile and
@@ -28,13 +29,14 @@ ifeq ($(APP),cpu)
   TARGET      := spm3ds
   SOURCES     := source/cpu source/generated
   LIBS        := -lctru -lm
-  RUNTIME_SRC := $(RUNTIME)/hle.c $(RUNTIME)/os.c $(RUNTIME)/mem.c
+  RUNTIME_SRC := $(RUNTIME)/hle.c $(RUNTIME)/os.c $(RUNTIME)/mem.c $(RUNTIME)/hw.c \
+                 $(RUNTIME)/dvd.c
   SHADER_DIRS :=
 else ifeq ($(APP),gfx)
   TARGET      := spm3ds_gfx
   SOURCES     := source/gfx
   LIBS        := -lcitro3d -lctru -lm
-  RUNTIME_SRC :=
+  RUNTIME_SRC := $(RUNTIME)/hw.c $(RUNTIME)/gx_cp.c
   SHADER_DIRS := source/gfx
 else
   $(error "APP must be cpu or gfx")
@@ -47,11 +49,16 @@ LIBDIRS  := $(CTRULIB)
 # ---- code generation (same flags as the devkitPro examples) -----------------
 ARCH := -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft
 
+# SPM3DS_DIAG_LEVEL=1: count guest instructions once per basic block (exact totals, cheap on
+# the in-order ARM11); crash reports name the start of the block. See runtime/ppc_ctx.h.
+DIAG_LEVEL ?= 1
 CFLAGS  := -g -Wall -O2 -mword-relocations -ffunction-sections $(ARCH) -D__3DS__ -std=gnu11 \
-           -MMD -MP
+           -MMD -MP -DSPM3DS_DIAG_LEVEL=$(DIAG_LEVEL)
 CFLAGS  += $(foreach d,$(INCLUDES),-I$(CURDIR)/$(d)) \
            $(foreach d,$(LIBDIRS),-I$(d)/include) \
            -I$(RUNTIME) -I$(CURDIR)/$(BUILD)
+# Extra flags from the command line, e.g. `make EXTRA_CFLAGS=-Werror` (CI uses this).
+CFLAGS  += $(EXTRA_CFLAGS)
 LDFLAGS := -specs=3dsx.specs -g $(ARCH) $(foreach d,$(LIBDIRS),-L$(d)/lib)
 
 # ---- sources and objects ----------------------------------------------------
@@ -104,8 +111,9 @@ $(BUILD)/%_shbin.h: $(BUILD)/%.shbin
 	@echo "extern const u8" $(*F)_shbin"[];"     >> $@
 	@echo "extern const u32" $(*F)_shbin_size";" >> $@
 
+# -a 4: DVLB_ParseFile reads the shader binary as u32 words, so it must be 4-byte aligned.
 $(BUILD)/%.shbin.o: $(BUILD)/%.shbin $(BUILD)/%_shbin.h
-	bin2s $< | $(AS) -o $@
+	bin2s -a 4 $< | $(AS) -o $@
 
 -include $(DEP)
 
