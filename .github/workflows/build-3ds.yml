@@ -1,13 +1,12 @@
-# CI for spm3ds. UNTESTED: this workflow has not been run on GitHub yet.
+# CI for spm3ds. First successful run: 2026-11-25 (both .3dsx files built).
 #
 # Job 1 runs the host tests on a standard Linux runner (Python 3, gcc).
 # Job 2 installs the 3DS libraries and tools inside devkitPro's devkitARM container, then builds
 #        both apps (APP=cpu and APP=gfx) and uploads both .3dsx files.
 #
-# The package group name "3ds-dev" is NOT verified: the devkitPro repositories cloned for this
-# project show only individual "3ds-<name>" packages (for example 3ds-pkg-config). If the
-# install step fails, check the group name with `dkp-pacman -Ss 3ds` inside the container and
-# list the individual packages instead (libctru, citro3d, picasso, bin2s, 3dstools).
+# The "3ds-dev" package group was confirmed by the first CI run (2026-11-25): it has 20 members,
+# including libctru, citro3d, picasso, 3dstools and devkitARM, and is preinstalled in the image.
+# Both apps compile with EXTRA_CFLAGS=-Werror, so a new compiler warning fails the build.
 name: build-3ds
 
 on:
@@ -37,10 +36,10 @@ jobs:
           dkp-pacman -Sy --noconfirm 3ds-dev
       - name: Build the CPU demo (APP=cpu)
         working-directory: platform/3ds
-        run: make APP=cpu
+        run: make APP=cpu EXTRA_CFLAGS=-Werror
       - name: Build the graphics demo (APP=gfx)
         working-directory: platform/3ds
-        run: make APP=gfx
+        run: make APP=gfx EXTRA_CFLAGS=-Werror
       - uses: actions/upload-artifact@v4
         with:
           name: spm3ds-3dsx
