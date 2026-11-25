@@ -1,0 +1,15 @@
+# Game files and firmware: never commit these
+*.dol
+*.iso
+*.wbfs
+*.arc
+*.bin
+*.rvz
+*.3dsx.elf
+# Build output
+__pycache__/
+*.pyc
+build-cpu/
+build-gfx/
+*.elf
+*.d

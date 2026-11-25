@@ -1,0 +1,42 @@
+; Vertex shader for the spm3ds graphics demo (picasso assembler).
+; Inputs:  v0 = object-space position (xyz), v1 = texture coordinate (uv)
+; Uniforms: modelView (rotation and translation), projection (perspective)
+; Outputs:  position, texcoord0, colour (white, so the texture passes through unchanged)
+;
+; Register and uniform naming follows citro3d's textured_cube example. Assemble with
+; picasso; the Makefile embeds the result as cube_shbin.
+
+.fvec projection[4]
+.fvec modelView[4]
+
+.constf myconst(0.0, 1.0, 0.0, 0.0)
+.alias ones myconst.yyyy
+
+.out outpos position
+.out outtc0 texcoord0
+.out outclr color
+
+.alias inpos v0
+.alias intex v1
+
+.proc main
+  ; Homogeneous position: (x, y, z, 1) in object space.
+  mov r0.xyz, inpos
+  mov r0.w, ones
+
+  ; Eye space: r1 = modelView * r0
+  dp4 r1.x, modelView[0], r0
+  dp4 r1.y, modelView[1], r0
+  dp4 r1.z, modelView[2], r0
+  dp4 r1.w, modelView[3], r0
+
+  ; Clip space: outpos = projection * r1
+  dp4 outpos.x, projection[0], r1
+  dp4 outpos.y, projection[1], r1
+  dp4 outpos.z, projection[2], r1
+  dp4 outpos.w, projection[3], r1
+
+  mov outtc0.xy, intex
+  mov outclr, ones
+  end
+.end
