@@ -41,7 +41,7 @@ def shader_stub(name):
 
 
 # Runtime files each app links (kept in step with platform/3ds/Makefile, RUNTIME_SRC).
-RUNTIME_FILES = {"cpu": ("hle.c", "os.c", "mem.c", "hw.c"), "gfx": ("hw.c", "gx_cp.c")}
+RUNTIME_FILES = {"cpu": ("hle.c", "os.c", "mem.c", "hw.c", "dvd.c"), "gfx": ("hw.c", "gx_cp.c")}
 
 
 def app_sources(app):

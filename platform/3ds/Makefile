@@ -29,7 +29,8 @@ ifeq ($(APP),cpu)
   TARGET      := spm3ds
   SOURCES     := source/cpu source/generated
   LIBS        := -lctru -lm
-  RUNTIME_SRC := $(RUNTIME)/hle.c $(RUNTIME)/os.c $(RUNTIME)/mem.c $(RUNTIME)/hw.c
+  RUNTIME_SRC := $(RUNTIME)/hle.c $(RUNTIME)/os.c $(RUNTIME)/mem.c $(RUNTIME)/hw.c \
+                 $(RUNTIME)/dvd.c
   SHADER_DIRS :=
 else ifeq ($(APP),gfx)
   TARGET      := spm3ds_gfx
