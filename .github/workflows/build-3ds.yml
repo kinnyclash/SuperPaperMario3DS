@@ -40,6 +40,13 @@ jobs:
       - name: Build the graphics demo (APP=gfx)
         working-directory: platform/3ds
         run: make APP=gfx EXTRA_CFLAGS=-Werror
+      # The game app needs translated game code, which only exists on the user's computer.
+      # CI builds it from the stand-in game (tools/make_game_stub.py) to check that it links.
+      - name: Build the game app with the stand-in game (APP=game)
+        run: |
+          command -v python3 >/dev/null || (apt-get update && apt-get install -y --no-install-recommends python3)
+          python3 tools/make_game_stub.py platform/3ds/source/game_generated --dol platform/3ds/stub_main.dol
+          cd platform/3ds && make APP=game EXTRA_CFLAGS=-Werror
       - uses: actions/upload-artifact@v4
         with:
           name: spm3ds-3dsx
@@ -49,4 +56,13 @@ jobs:
         with:
           name: spm3ds-gfx-3dsx
           path: platform/3ds/spm3ds_gfx.3dsx
+          if-no-files-found: error
+      # The stand-in build lets you test the boot path on the console: copy stub_main.dol to
+      # sdmc:/spm3ds/disc/sys/main.dol and run spm3ds_game_stub.3dsx. It is not the game.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spm3ds-game-stub
+          path: |
+            platform/3ds/spm3ds_game.3dsx
+            platform/3ds/stub_main.dol
           if-no-files-found: error

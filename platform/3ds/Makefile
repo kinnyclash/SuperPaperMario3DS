@@ -1,9 +1,14 @@
 # New Nintendo 3DS / New 2DS XL build for spm3ds (devkitARM + libctru + citro3d).
 #
-# Two apps share this file:
+# Three apps share this file:
 #   make APP=cpu   -> spm3ds.3dsx      CPU demo: translated PowerPC, diagnostics, NDSP tone
 #   make APP=gfx   -> spm3ds_gfx.3dsx  Graphics demo: textured cube (citro3d), and a cube drawn
 #                                      by translated PowerPC code through GX (press A)
+#   make APP=game  -> spm3ds_game.3dsx Boots your own main.dol from the SD card. Needs the
+#                                      translated code in GAME_DIR (default
+#                                      source/game_generated), made on your computer with
+#                                      python -m spm3ds.recomp compile main.dol DIR --split 400
+#                                      --game-info; tools/make_game_stub.py makes a stand-in.
 # Default: APP=cpu.
 #
 # Structure follows devkitPro's examples (3ds-examples/templates/application/Makefile and
@@ -25,21 +30,34 @@ include $(DEVKITARM)/3ds_rules
 APP ?= cpu
 RUNTIME := ../../runtime
 
+GAME_DIR ?= source/game_generated
+
 ifeq ($(APP),cpu)
   TARGET      := spm3ds
-  SOURCES     := source/cpu source/generated
+  SOURCES     := source/cpu source/generated source/audio
   LIBS        := -lctru -lm
   RUNTIME_SRC := $(RUNTIME)/hle.c $(RUNTIME)/os.c $(RUNTIME)/mem.c $(RUNTIME)/hw.c \
                  $(RUNTIME)/dvd.c $(RUNTIME)/os_thread.c
   SHADER_DIRS :=
 else ifeq ($(APP),gfx)
   TARGET      := spm3ds_gfx
-  SOURCES     := source/gfx
+  SOURCES     := source/gfx source/render
   LIBS        := -lcitro3d -lctru -lm
   RUNTIME_SRC := $(RUNTIME)/hw.c $(RUNTIME)/gx_cp.c $(RUNTIME)/gx_tex.c
-  SHADER_DIRS := source/gfx
+  SHADER_DIRS := source/gfx source/render
+else ifeq ($(APP),game)
+  ifeq ($(wildcard $(GAME_DIR)/*.c),)
+    $(error "No translated game code in $(GAME_DIR). Generate it from your own main.dol (see the comment at the top of this file), or run tools/make_game_stub.py $(GAME_DIR) for a stand-in.")
+  endif
+  TARGET      := spm3ds_game
+  SOURCES     := source/game source/render source/audio $(GAME_DIR)
+  LIBS        := -lcitro3d -lctru -lm
+  RUNTIME_SRC := $(RUNTIME)/hle.c $(RUNTIME)/os.c $(RUNTIME)/mem.c $(RUNTIME)/hw.c \
+                 $(RUNTIME)/dvd.c $(RUNTIME)/os_thread.c $(RUNTIME)/gx_cp.c $(RUNTIME)/gx_tex.c \
+                 $(RUNTIME)/wii_boot.c
+  SHADER_DIRS := source/render
 else
-  $(error "APP must be cpu or gfx")
+  $(error "APP must be cpu, gfx or game")
 endif
 
 BUILD    := build-$(APP)
@@ -55,6 +73,7 @@ DIAG_LEVEL ?= 1
 CFLAGS  := -g -Wall -O2 -mword-relocations -ffunction-sections $(ARCH) -D__3DS__ -std=gnu11 \
            -MMD -MP -DSPM3DS_DIAG_LEVEL=$(DIAG_LEVEL)
 CFLAGS  += $(foreach d,$(INCLUDES),-I$(CURDIR)/$(d)) \
+           $(foreach d,$(SOURCES),-I$(CURDIR)/$(d)) \
            $(foreach d,$(LIBDIRS),-I$(d)/include) \
            -I$(RUNTIME) -I$(CURDIR)/$(BUILD)
 # Extra flags from the command line, e.g. `make EXTRA_CFLAGS=-Werror` (CI uses this).
@@ -118,4 +137,4 @@ $(BUILD)/%.shbin.o: $(BUILD)/%.shbin $(BUILD)/%_shbin.h
 -include $(DEP)
 
 clean:
-	rm -rf build-cpu build-gfx spm3ds.3dsx spm3ds_gfx.3dsx spm3ds.elf spm3ds_gfx.elf
+	rm -rf build-cpu build-gfx build-game spm3ds.3dsx spm3ds_gfx.3dsx spm3ds_game.3dsx

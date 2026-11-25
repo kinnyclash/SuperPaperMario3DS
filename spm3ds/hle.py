@@ -34,6 +34,8 @@ IMPLEMENTED = (
     "DVDReadAsyncPrio",
     "DVDGetCommandBlockStatus",
     "DVDGetDriveStatus",
+    # Provided by the 3DS game app (platform/3ds/source/game/game_main.c): presents a frame.
+    "VIWaitForRetrace",
     # runtime/os_thread.c (Nintendo SDK names, unverified; see runtime/os_thread.h)
     "OSCreateThread",
     "OSResumeThread",

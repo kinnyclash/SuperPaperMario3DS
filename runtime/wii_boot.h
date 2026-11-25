@@ -56,4 +56,8 @@ typedef struct {
  * of the FST copy (0 if none). */
 uint32_t wii_boot_globals(ppc_ctx *c, const wii_dol *dol, const wii_boot_info *info);
 
+/* CRC-32 (the zlib/PNG polynomial), used to check that the DOL on the SD card is the one the
+ * translated code was generated from. */
+uint32_t wii_crc32(const uint8_t *data, size_t n);
+
 #endif /* SPM3DS_WII_BOOT_H */

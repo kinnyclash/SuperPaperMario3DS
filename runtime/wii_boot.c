@@ -88,6 +88,17 @@ int wii_boot_load_dol(ppc_ctx *c, const uint8_t *file, const wii_dol *d) {
 
 static void w32(ppc_ctx *c, uint32_t ea, uint32_t v) { ppc_w32(c, ea, v); }
 
+uint32_t wii_crc32(const uint8_t *data, size_t n) {
+    uint32_t crc = 0xFFFFFFFFu;
+    size_t i;
+    unsigned k;
+    for (i = 0; i < n; i++) {
+        crc ^= data[i];
+        for (k = 0; k < 8; k++) crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+    }
+    return ~crc;
+}
+
 uint32_t wii_boot_globals(ppc_ctx *c, const wii_dol *d, const wii_boot_info *info) {
     uint32_t arena_lo = (d->end + 31u) & ~31u;
     uint32_t fst_size = info && info->fst ? info->fst_size : 0;

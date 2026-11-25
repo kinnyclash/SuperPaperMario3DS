@@ -26,6 +26,9 @@ void hle_spm3ds_FSSize(ppc_ctx *c);
 void hle_spm3ds_FSRead(ppc_ctx *c);
 void hle_spm3ds_FSClose(ppc_ctx *c);
 
+/* Video: provided by the platform (the 3DS game app presents a frame here). */
+void hle_VIWaitForRetrace(ppc_ctx *c);
+
 /* Disc file access (runtime/dvd.c). */
 #include "dvd.h"
 

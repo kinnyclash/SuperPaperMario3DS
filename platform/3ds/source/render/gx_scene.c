@@ -15,13 +15,6 @@
 
 #define MAX_VERTS (3u * 4096u)
 
-void spm3ds_gx_demo_frame(ppc_ctx *c, float cy, float sy, float cx, float sx);
-extern const uint32_t spm3ds_gx_demo_texture_addr;
-extern const uint8_t spm3ds_gx_demo_texture[2048];
-
-/* Guest memory for the demo: one 4 KiB region holding the demo texture. */
-static uint8_t demo_memory[4096];
-
 /* Physical addresses (as GX registers hold them) to guest reads: MEM1 0x0..., MEM2 0x1...
  * are mapped at 0x80000000 + physical, as on the Wii. */
 static int read_guest(void *user, uint32_t phys, uint8_t *dst, uint32_t n) {
@@ -124,7 +117,7 @@ static gx_scene_texture *scene_texture(gx_scene *s, const gx_batch *b) {
     return t;
 }
 
-int gx_scene_create(gx_scene *s) {
+int gx_scene_create(gx_scene *s, ppc_ctx *ctx, spm3ds_hw *hw) {
     memset(s, 0, sizeof *s);
     s->dvlb = DVLB_ParseFile((u32 *)gxpass_shbin, gxpass_shbin_size);
     if (!s->dvlb) return -1;
@@ -140,35 +133,30 @@ int gx_scene_create(gx_scene *s) {
     BufInfo_Init(&s->buf);
     BufInfo_Add(&s->buf, s->vbo, sizeof(gx_scene_vertex), 3, 0x210);
 
-    /* Guest state: registers, the hardware pipe and one region holding the demo texture. */
-    s->ctx = (ppc_ctx *)calloc(1, sizeof *s->ctx);
-    s->hw = (spm3ds_hw *)malloc(sizeof *s->hw);
+    s->ctx = ctx;
+    s->hw = hw;
     s->cp = (gx_cp *)malloc(sizeof *s->cp);
-    if (!s->ctx || !s->hw || !s->cp) return -5;
-    memcpy(demo_memory, spm3ds_gx_demo_texture, sizeof spm3ds_gx_demo_texture);
-    s->ctx->regions[0].base = spm3ds_gx_demo_texture_addr;
-    s->ctx->regions[0].size = sizeof demo_memory;
-    s->ctx->regions[0].data = demo_memory;
-    s->ctx->nregions = 1;
-    spm3ds_hw_init(s->hw);
-    spm3ds_hw_attach(s->ctx, s->hw);
+    if (!s->cp) return -5;
     gx_cp_init(s->cp, read_guest, s->ctx);
     return 0;
 }
 
-void gx_scene_frame(gx_scene *s, C3D_RenderTarget *target, float angle_y, float angle_x) {
+void gx_scene_present(gx_scene *s, C3D_RenderTarget *target) {
     u32 i, n;
+    size_t used;
     C3D_TexEnv *env;
     gx_scene_texture **bound;
 
-    /* 1. Run one frame of translated guest code; it writes GX commands to the pipe. */
-    spm3ds_hw_fifo_clear(s->hw);
-    spm3ds_gx_demo_frame(s->ctx, cosf(angle_y), sinf(angle_y), cosf(angle_x), sinf(angle_x));
+    /* 1-2. Decode what the guest sent since the last frame into clip-space triangles. */
     s->fifo_bytes = (u32)s->hw->fifo_size;
-
-    /* 2. Decode the commands into clip-space triangles. */
     gx_cp_clear_output(s->cp);
-    gx_cp_run(s->cp, s->hw->fifo, s->hw->fifo_size);
+    used = gx_cp_run(s->cp, s->hw->fifo, s->hw->fifo_size);
+    if (used < s->hw->fifo_size && !s->cp->error) {
+        memmove(s->hw->fifo, s->hw->fifo + used, s->hw->fifo_size - used);
+        s->hw->fifo_size -= used;
+    } else {
+        spm3ds_hw_fifo_clear(s->hw);
+    }
     s->error = s->cp->error;
     n = s->cp->out_count;
     if (n > MAX_VERTS) n = MAX_VERTS - (MAX_VERTS % 3u);
@@ -254,11 +242,6 @@ void gx_scene_destroy(gx_scene *s) {
         gx_cp_free(s->cp);
         free(s->cp);
     }
-    if (s->hw) {
-        spm3ds_hw_free(s->hw);
-        free(s->hw);
-    }
-    free(s->ctx);
     if (s->vbo) linearFree(s->vbo);
     shaderProgramFree(&s->program);
     if (s->dvlb) DVLB_Free(s->dvlb);

@@ -41,15 +41,27 @@ def shader_stub(name):
 
 
 # Runtime files each app links (kept in step with platform/3ds/Makefile, RUNTIME_SRC).
-RUNTIME_FILES = {"cpu": ("hle.c", "os.c", "mem.c", "hw.c", "dvd.c", "os_thread.c"), "gfx": ("hw.c", "gx_cp.c", "gx_tex.c")}
+RUNTIME_FILES = {
+    "cpu": ("hle.c", "os.c", "mem.c", "hw.c", "dvd.c", "os_thread.c"),
+    "gfx": ("hw.c", "gx_cp.c", "gx_tex.c"),
+    "game": ("hle.c", "os.c", "mem.c", "hw.c", "dvd.c", "os_thread.c", "gx_cp.c", "gx_tex.c",
+             "wii_boot.c"),
+}
+APP_DIRS = {
+    "cpu": ["source/cpu", "source/generated", "source/audio"],
+    "gfx": ["source/gfx", "source/render"],
+    "game": ["source/game", "source/render", "source/audio"],   # plus the generated game code
+}
+SHADER_DIRS = {"cpu": [], "gfx": ["source/gfx", "source/render"], "game": ["source/render"]}
 
 
-def app_sources(app):
+def app_sources(app, game_dir=None):
     """C files the Makefile compiles for an app (mirrors platform/3ds/Makefile)."""
-    dirs = {"cpu": ["source/cpu", "source/generated"], "gfx": ["source/gfx"]}[app]
+    dirs = [os.path.join(PLATFORM, d) for d in APP_DIRS[app]]
+    if app == "game" and game_dir:
+        dirs.append(game_dir)
     files = []
-    for d in dirs:
-        full = os.path.join(PLATFORM, d)
+    for full in dirs:
         for dirpath, _, names in os.walk(full):
             files += [os.path.join(dirpath, n) for n in sorted(names) if n.endswith(".c")]
     files += [os.path.join(RUNTIME, n) for n in RUNTIME_FILES[app]]
@@ -57,10 +69,11 @@ def app_sources(app):
 
 
 def shader_names(app):
-    if app != "gfx":
-        return []
-    d = os.path.join(PLATFORM, "source", "gfx")
-    return [n[: -len(".v.pica")] for n in sorted(os.listdir(d)) if n.endswith(".v.pica")]
+    names = []
+    for rel in SHADER_DIRS[app]:
+        d = os.path.join(PLATFORM, rel)
+        names += [n[: -len(".v.pica")] for n in sorted(os.listdir(d)) if n.endswith(".v.pica")]
+    return names
 
 
 def host_multiarch_dirs():
@@ -82,17 +95,20 @@ def check(libctru, citro3d, clang="clang", verbose=False):
         # functions, so an empty file is enough for a syntax check.
         open(os.path.join(stub, "gnu", "stubs-32.h"), "w").close()
         failures = 0
-        for app in ("cpu", "gfx"):
+        game_dir = os.path.join(stub, "game_generated")
+        sys.path.insert(0, os.path.join(ROOT, "tools"))
+        import make_game_stub
+        make_game_stub.build(game_dir)
+        for app in ("cpu", "gfx", "game"):
             for name in shader_names(app):
                 with open(os.path.join(stub, f"{name}_shbin.h"), "w") as f:
                     f.write(shader_stub(name))
-            for src in app_sources(app):
+            for src in app_sources(app, game_dir):
                 cmd = [clang, "--target=armv6k-none-eabihf", "-mfloat-abi=hard", "-D__3DS__",
-                       "-std=gnu11", "-fsyntax-only", "-Wall", "-Wextra",
-                       "-I", libctru, "-I", RUNTIME, "-I", os.path.join(PLATFORM, "source", app),
-                       "-I", stub]
-                if app == "gfx":
-                    cmd += ["-I", citro3d]
+                       "-std=gnu11", "-fsyntax-only", "-Wall", "-Wextra", "-Wno-unused-label",
+                       "-I", libctru, "-I", RUNTIME, "-I", stub, "-I", game_dir, "-I", citro3d]
+                for rel in APP_DIRS[app]:
+                    cmd += ["-I", os.path.join(PLATFORM, rel)]
                 for d in host_multiarch_dirs():
                     cmd += ["-isystem", d]
                 cmd.append(src)

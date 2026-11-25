@@ -17,11 +17,11 @@
 #include <stdio.h>
 
 #include "gx_citro3d.h"
-#include "gx_scene.h"
+#include "gx_demo.h"
 
 int main(void) {
     gfx_cube cube;
-    gx_scene scene;
+    gx_demo scene;
     int rc_cube, rc_scene;
     int which = 1;          /* start on the translated-GX scene: it is the new path */
     u32 frames = 0;
@@ -32,7 +32,7 @@ int main(void) {
     printf("spm3ds graphics demo\n");
 
     rc_cube = gfx_cube_create(&cube);
-    rc_scene = rc_cube == 0 ? gx_scene_create(&scene) : -100;
+    rc_scene = rc_cube == 0 ? gx_demo_create(&scene) : -100;
     if (rc_cube != 0) printf("cube setup failed (step %d)\n", rc_cube);
     if (rc_scene != 0) printf("GX scene setup failed (step %d)\n", rc_scene);
     printf("A: switch scene   START: exit\n");
@@ -48,7 +48,7 @@ int main(void) {
             continue;
         }
         if (which == 1 && rc_scene == 0) {
-            gx_scene_frame(&scene, cube.target, angle, angle * 0.7f);
+            gx_demo_frame(&scene, cube.target, angle, angle * 0.7f);
         } else {
             gfx_cube_frame(&cube, angle * 0.7f, angle);
         }
@@ -59,8 +59,8 @@ int main(void) {
                    which == 1 ? "translated PowerPC -> GX" : "native citro3d cube");
             if (which == 1) {
                 printf("GX FIFO bytes: %lu    \ntriangles: %lu    \nGX errors: %d    \n",
-                       (unsigned long)scene.fifo_bytes, (unsigned long)scene.triangles,
-                       scene.error);
+                       (unsigned long)scene.scene.fifo_bytes,
+                       (unsigned long)scene.scene.triangles, scene.scene.error);
             } else {
                 printf("                          \n                          \n"
                        "                          \n");
@@ -69,7 +69,7 @@ int main(void) {
         }
     }
 
-    if (rc_scene == 0) gx_scene_destroy(&scene);
+    if (rc_scene == 0) gx_demo_destroy(&scene);
     if (rc_cube == 0) gfx_cube_destroy(&cube);
     gfx_shutdown();
     return 0;

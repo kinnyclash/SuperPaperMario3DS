@@ -10,7 +10,7 @@ import tempfile
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC = os.path.join(ROOT, "platform", "3ds", "source", "gfx")
+SRC = os.path.join(ROOT, "platform", "3ds", "source", "render")
 
 DRIVER = r"""
 #include <stdio.h>
