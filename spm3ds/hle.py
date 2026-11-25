@@ -7,7 +7,7 @@ host implementation in runtime/hle.c are bound; the rest are reported.
 The symbol file comes from the user's own decompilation work. It is not shipped here.
 """
 
-# Keep in step with runtime/hle.c.
+# Keep in step with runtime/hle.c, runtime/os.c and runtime/dvd.c.
 IMPLEMENTED = (
     "OSReport",
     "OSHalt",
@@ -25,6 +25,15 @@ IMPLEMENTED = (
     "spm3ds_FSSize",
     "spm3ds_FSRead",
     "spm3ds_FSClose",
+    # runtime/dvd.c (Nintendo SDK names, unverified; see runtime/dvd.h)
+    "DVDOpen",
+    "DVDFastOpen",
+    "DVDConvertPathToEntrynum",
+    "DVDClose",
+    "DVDReadPrio",
+    "DVDReadAsyncPrio",
+    "DVDGetCommandBlockStatus",
+    "DVDGetDriveStatus",
 )
 
 

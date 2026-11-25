@@ -26,6 +26,9 @@ void hle_spm3ds_FSSize(ppc_ctx *c);
 void hle_spm3ds_FSRead(ppc_ctx *c);
 void hle_spm3ds_FSClose(ppc_ctx *c);
 
+/* Disc file access (runtime/dvd.c). */
+#include "dvd.h"
+
 /* Platform hooks (see runtime/os.c). */
 void spm3ds_set_clock(uint64_t (*source_ns)(void));
 void spm3ds_fs_set_root(const char *dir);
