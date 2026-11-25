@@ -51,11 +51,11 @@ void diag_screen(uint64_t (*now_ns)(void)) {
            (unsigned)(free_app / 1024u), (unsigned)free_app);
     printf("New 3DS-class CPU and memory: %s\n", n3ds ? "yes" : "no (Old 3DS or 2DS)");
     printf("Tick rate used for timing: %llu Hz\n", (unsigned long long)SPM3DS_TICK_HZ);
-#ifdef SPM3DS_NO_DIAG
-    printf("Instruction counting: disabled at build time\n");
-#else
-    printf("Instruction counting: on\n");
+#ifndef SPM3DS_DIAG_LEVEL
+#  define SPM3DS_DIAG_LEVEL 2
 #endif
+    printf("Instruction counting: %s\n", SPM3DS_DIAG_LEVEL >= 2 ? "per instruction"
+           : (SPM3DS_DIAG_LEVEL == 1 ? "per basic block" : "off (counts read 0)"));
 
     spm3ds_synthetic_quiet = 1;
     t0 = now_ns();

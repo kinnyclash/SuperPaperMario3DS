@@ -7,6 +7,7 @@ void fn_80200000(ppc_ctx *c);
 void fn_802000C8(ppc_ctx *c);
 
 void fn_80200000(ppc_ctx *c) {
+    PPC_BLOCK(0x80200000u, 15u);
     PPC_DIAG(0x80200000u);
     c->r[0] = c->lr;
     PPC_DIAG(0x80200004u);
@@ -38,6 +39,7 @@ void fn_80200000(ppc_ctx *c) {
     PPC_DIAG(0x80200038u);
     c->ctr = c->r[3];
 L_8020003C:
+    PPC_BLOCK(0x8020003Cu, 14u);
     PPC_DIAG(0x8020003Cu);
     c->r[5] = (c->r[5] * c->r[10]);
     PPC_DIAG(0x80200040u);
@@ -67,14 +69,17 @@ L_8020003C:
     c->cr = ppc_cmp_s(c->cr, 0u, (int32_t)c->r[11], 0, c->xer);
     PPC_DIAG(0x80200070u);
     if (((((c->cr >> 29) & 1u) != 0u) == 1)) goto L_8020007C;
+    PPC_BLOCK(0x80200074u, 2u);
     PPC_DIAG(0x80200074u);
     c->r[6] = (c->r[6] + c->r[5]);
     PPC_DIAG(0x80200078u);
     goto L_80200080;
 L_8020007C:
+    PPC_BLOCK(0x8020007Cu, 1u);
     PPC_DIAG(0x8020007Cu);
     c->r[6] = (c->r[6] ^ c->r[5]);
 L_80200080:
+    PPC_BLOCK(0x80200080u, 4u);
     PPC_DIAG(0x80200080u);
     c->f[1] = ppc_b(ppc_round_single(fma(ppc_d(c->f[1]), ppc_d(c->f[2]), ppc_d(c->f[3]))));
     PPC_DIAG(0x80200084u);
@@ -83,9 +88,11 @@ L_80200080:
     c->f[4] = ((uint64_t)ppc_s_b(fma(ppc_s_d(((uint32_t)(c->f[4] >> 32))), ppc_s_d(((uint32_t)(c->f[5] >> 32))), ppc_s_d(((uint32_t)(c->f[6] >> 32))))) << 32) | ppc_s_b(fma(ppc_s_d(((uint32_t)c->f[4])), ppc_s_d(((uint32_t)c->f[5])), ppc_s_d(((uint32_t)c->f[6]))));
     PPC_DIAG(0x8020008Cu);
     c->lr = 0x80200090u; fn_802000C8(c);
+    PPC_BLOCK(0x80200090u, 1u);
     PPC_DIAG(0x80200090u);
     c->ctr -= 1u;
     if (((c->ctr != 0u) != 0)) goto L_8020003C;
+    PPC_BLOCK(0x80200094u, 13u);
     PPC_DIAG(0x80200094u);
     ppc_w64(c, (c->r[4] + 0x4B0u), c->f[7]);
     PPC_DIAG(0x80200098u);
@@ -115,6 +122,7 @@ L_80200080:
 }
 
 void fn_802000C8(ppc_ctx *c) {
+    PPC_BLOCK(0x802000C8u, 2u);
     PPC_DIAG(0x802000C8u);
     c->r[6] = ppc_rotl32(c->r[6], 1u) & 0xFFFFFFFFu;
     PPC_DIAG(0x802000CCu);

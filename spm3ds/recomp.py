@@ -308,6 +308,28 @@ def _branch_lines(insn, fn, entries, external, external_names):
     raise NotImplementedError(op)
 
 
+BLOCK_ENDERS = ("b", "bl", "bc", "bclr", "bcctr")
+
+
+def _basic_blocks(addrs, body, labels):
+    """Return {block start address: instruction count} for one function.
+
+    A block starts at the first instruction, at every branch target label, after any branch
+    or call, and after a gap in the addresses. Control can only enter a block at its start
+    and only leave it at its end, so adding the count once at the start (PPC_BLOCK) gives the
+    same instruction count as counting every instruction (PPC_DIAG)."""
+    sizes = {}
+    start = None
+    prev = None
+    for addr in addrs:
+        if start is None or addr in labels or addr != prev + 4 or body[prev].op in BLOCK_ENDERS:
+            start = addr
+            sizes[start] = 0
+        sizes[start] += 1
+        prev = addr
+    return sizes
+
+
 def _table_dispatch_lines(targets):
     """A bctr through a declared jump table: jump to a listed label. Any other value is tried
     as a function (a tail call), and the dispatcher aborts if it is not a known function."""
@@ -358,11 +380,14 @@ def generate_c(image, entry, external_names=None, strict=True, seeds=(), jump_ta
                     jump_labels.add(label)
         out.append("")
         out.append(f"void {fn_name(f)}(ppc_ctx *c) {{")
+        block_sizes = _basic_blocks(sorted(body), body, jump_labels)
         for addr in sorted(body):
             insn = body[addr]
             if addr in jump_labels:
                 out.append(f"L_{addr:08X}:")
             lines = branch_lines.get(addr) or _data_lines(insn)
+            if addr in block_sizes:
+                out.append(f"    PPC_BLOCK(0x{addr:08X}u, {block_sizes[addr]}u);")
             out.append(f"    PPC_DIAG(0x{addr:08X}u);")
             for line in lines:
                 out.append("    " + line)
@@ -418,6 +443,7 @@ def harness_source(entry, memmap, init=(), dumps=(), includes=(), before=(), aft
     lines.append('    for (int i = 0; i < 32; i++) printf("f%d %016llx\\n", i, (unsigned long long)c.f[i]);')
     lines.append('    printf("lr %08x\\nctr %08x\\ncr %08x\\n", (unsigned)c.lr, (unsigned)c.ctr, (unsigned)c.cr);')
     lines.append('    printf("xer %08x\\n", (unsigned)(c.xer & 0xE0000000u));')
+    lines.append('    printf("icount %llu\\n", (unsigned long long)c.icount);')
     for address, length in dumps:
         lines.append(f"    {{ const uint8_t *p = ppc_ptr(&c, 0x{address:08X}u, {length}); "
                      f'printf("m %08x", 0x{address:08X}u); '

@@ -49,8 +49,11 @@ LIBDIRS  := $(CTRULIB)
 # ---- code generation (same flags as the devkitPro examples) -----------------
 ARCH := -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft
 
+# SPM3DS_DIAG_LEVEL=1: count guest instructions once per basic block (exact totals, cheap on
+# the in-order ARM11); crash reports name the start of the block. See runtime/ppc_ctx.h.
+DIAG_LEVEL ?= 1
 CFLAGS  := -g -Wall -O2 -mword-relocations -ffunction-sections $(ARCH) -D__3DS__ -std=gnu11 \
-           -MMD -MP
+           -MMD -MP -DSPM3DS_DIAG_LEVEL=$(DIAG_LEVEL)
 CFLAGS  += $(foreach d,$(INCLUDES),-I$(CURDIR)/$(d)) \
            $(foreach d,$(LIBDIRS),-I$(d)/include) \
            -I$(RUNTIME) -I$(CURDIR)/$(BUILD)

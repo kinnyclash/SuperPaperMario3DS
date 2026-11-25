@@ -6,6 +6,7 @@ void ppc_dispatch(ppc_ctx *c, uint32_t target);
 void fn_80100000(ppc_ctx *c);
 
 void fn_80100000(ppc_ctx *c) {
+    PPC_BLOCK(0x80100000u, 408u);
     PPC_DIAG(0x80100000u);
     c->r[3] = 0u + 0xCC000000u;
     PPC_DIAG(0x80100004u);

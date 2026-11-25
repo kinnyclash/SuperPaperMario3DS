@@ -112,11 +112,29 @@ static inline uint8_t *ppc_ptr(ppc_ctx *c, uint32_t ea, uint32_t n) {
     return p;
 }
 
-/* Emitted before each translated instruction. Define SPM3DS_NO_DIAG to remove the cost. */
-#ifdef SPM3DS_NO_DIAG
-#  define PPC_DIAG(addr) ((void)0)
-#else
+/* Guest diagnostics in generated code. SPM3DS_DIAG_LEVEL selects the cost:
+ *   2 (default): PPC_DIAG before every instruction sets c->pc and counts it; crash reports
+ *                name the exact instruction.
+ *   1:           PPC_BLOCK at the start of each basic block sets c->pc to the block start
+ *                and adds the block's instruction count; the total count is the same as
+ *                level 2, at a fraction of the cost (one update per block).
+ *   0:           no diagnostics (also selected by SPM3DS_NO_DIAG). */
+#ifndef SPM3DS_DIAG_LEVEL
+#  ifdef SPM3DS_NO_DIAG
+#    define SPM3DS_DIAG_LEVEL 0
+#  else
+#    define SPM3DS_DIAG_LEVEL 2
+#  endif
+#endif
+#if SPM3DS_DIAG_LEVEL >= 2
 #  define PPC_DIAG(addr) do { c->pc = (addr); c->icount++; } while (0)
+#  define PPC_BLOCK(addr, n) ((void)0)
+#elif SPM3DS_DIAG_LEVEL == 1
+#  define PPC_DIAG(addr) ((void)0)
+#  define PPC_BLOCK(addr, n) do { c->pc = (addr); c->icount += (n); } while (0)
+#else
+#  define PPC_DIAG(addr) ((void)0)
+#  define PPC_BLOCK(addr, n) ((void)0)
 #endif
 
 static inline uint32_t ppc_r8(ppc_ctx *c, uint32_t ea) {
