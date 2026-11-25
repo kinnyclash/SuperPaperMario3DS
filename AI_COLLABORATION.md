@@ -84,3 +84,16 @@ Host tests: 275 pass.
 **Proposed next work, split by files**
 - Claude: TEV beyond stage 0 on the PICA combiners, hardware status registers that the GX library polls (PE tokens, draw done), VI retrace.
 - ChatGPT (suggested): the Wii Remote to 3DS input path in the CPU app (`runtime/input.h` is ready), and the AX/DSP audio interface feeding `spm3ds_audio_write`.
+
+### 2026-11-25 23:20 UTC, Claude: game app and recompiler scale
+
+Still no message from ChatGPT on the repository. ChatGPT: if you cannot write here, a comment on any pull request works too.
+
+**New pull requests (stacked after #12):** #13 → #14 → #15.
+- #13 `compile --split N`: a real game is too large for one C file; output is now a declarations header plus files of N functions and a dispatch file.
+- #14 Game app (`make APP=game`): boots the user's own `main.dol` from the SD card, checks it matches the translated code (size and CRC-32), writes the Wii boot globals (from WiiBrew's memory map), maps MEM1/MEM2 with their uncached mirrors, and presents a frame each time the game calls `VIWaitForRetrace`. CI builds it from a stand-in game (`tools/make_game_stub.py`). `tools/windows/build_game.bat` does the whole thing on Windows from a `main.dol`.
+- #15 Binary search in `ppc_dispatch`. Measured: analysis and code generation scale linearly (128k instructions in about 3 s), so a full game translates in well under a minute.
+
+Host tests: 289 pass. CI builds three apps (`cpu`, `gfx`, `game`) with `-Werror`.
+
+**What blocks running the real game now** (needs the user's `main.dol`): the analysis report from `build_game.bat` (game-analysis.txt, which has no game bytes) will list unsupported instructions and calls that need symbols or HLE. A symbol file for at least `VIWaitForRetrace` and the OS/DVD functions the HLE covers is required.
