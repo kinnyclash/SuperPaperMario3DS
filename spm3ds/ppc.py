@@ -18,9 +18,12 @@ modelled.
 import math
 import struct
 from dataclasses import dataclass
+from fractions import Fraction
 
 from .quant import TYPE_FORMATS, dequantize, load_fields, quantize, store_fields
 from .memory import GuestFault
+
+_HAS_MATH_FMA = hasattr(math, "fma")
 
 M32 = 0xFFFFFFFF
 M64 = 0xFFFFFFFFFFFFFFFF
@@ -32,6 +35,7 @@ SPR_GQR0 = 912   # GQR0..GQR7 are SPRs 912..919
 # Largest single-precision value, and the double at which rounding to single overflows.
 # Ties at the halfway point round to infinity, as IEEE 754 requires.
 CA_BIT = 1 << 29  # XER.CA
+XER_MODELLED = 0xE0000000  # SO, OV, CA
 
 # Carry-setting integer ops, all writing rD. Each entry is (invert rA, source of the second
 # operand, carry-in source): the sum is (rA or ~rA) + second + carry-in.
@@ -80,6 +84,8 @@ class Insn:
     fc: int = 0
     wbit: int = 0    # paired singles: W (psq_l/psq_st: only the first single)
     gqr: int = 0     # paired singles: which GQR register holds the quantization
+    crm: int = 0     # mtcrf CRM / mtfsf FM field mask (bit 7 = field 0)
+    crfs: int = 0    # source CR or FPSCR field for mcrf / mcrfs
 
 
 # ---------------------------------------------------------------- bit helpers
@@ -182,10 +188,12 @@ def extsh(x):
     return sext(x, 16) & M32
 
 
-def cmp_field(cr, crf, a, b):
-    """Set condition register field `crf` from comparing a with b (both already in range)."""
+def cmp_field(cr, crf, a, b, so=0):
+    """Set condition register field `crf` from comparing a with b (both already in range).
+
+    `so` is XER.SO, which integer compares and Rc=1 forms copy into the field's low bit."""
     shift = 28 - 4 * crf
-    field = 8 if a < b else (4 if a > b else 2)
+    field = (8 if a < b else (4 if a > b else 2)) | (so & 1)
     return (cr & ~(0xF << shift) & M32) | (field << shift)
 
 
@@ -225,11 +233,31 @@ def fdiv(a, b):
     return a / b
 
 
-def fma(a, c, b):
+def _fma_exact(a, c, b):
+    """a*c+b with one rounding, for Python versions without math.fma (before 3.13).
+
+    The product and sum are computed exactly as fractions; float() then rounds to nearest,
+    ties to even, which is the IEEE default and what math.fma does."""
+    if not (math.isfinite(a) and math.isfinite(c) and math.isfinite(b)):
+        return a * c + b  # infinities and NaN: plain float arithmetic gives the IEEE result
+    if a == 0.0 or c == 0.0:
+        return a * c + b  # exact product zero: float addition keeps the IEEE zero sign rules
+    exact = Fraction(a) * Fraction(c) + Fraction(b)
+    if exact == 0:
+        return 0.0  # exact cancellation of non-zero terms rounds to +0
     try:
-        return math.fma(a, c, b)
-    except ValueError:
-        return math.nan
+        return float(exact)
+    except OverflowError:
+        return math.inf if exact > 0 else -math.inf
+
+
+def fma(a, c, b):
+    if _HAS_MATH_FMA:
+        try:
+            return math.fma(a, c, b)
+        except ValueError:
+            return math.nan
+    return _fma_exact(a, c, b)
 
 
 def single_value(bits):
@@ -355,6 +383,9 @@ def _spr(word):
 
 def decode(word, addr):
     w = word & M32
+    ext = decode_ext(w, addr)  # encodings only spm3ds/ppc_ext.py handles
+    if ext is not None:
+        return ext
     op = w >> 26
     d = (w >> 21) & 31
     a = (w >> 16) & 31
@@ -543,7 +574,11 @@ class Machine:
         self.lr = 0
         self.ctr = 0
         self.cr = 0
-        self.xer = 0          # only bit 29 (CA) is modelled
+        self.xer = 0          # SO (bit 31), OV (bit 30) and CA (bit 29) are modelled
+        self.msr = 0
+        self.fpscr = 0
+        self.tb = 0           # time base; the runtime sets it, it does not advance alone
+        self.sprs = {}        # SPRs without their own field (plain storage)
         self.gqr = [0] * 8    # quantization registers GQR0..GQR7
         self.entries = frozenset()
         self._cache = {}
@@ -556,7 +591,7 @@ class Machine:
 
     def state(self):
         return {"r": list(self.r), "f": list(self.f), "lr": self.lr,
-                "ctr": self.ctr, "cr": self.cr, "xer": self.xer & CA_BIT}
+                "ctr": self.ctr, "cr": self.cr, "xer": self.xer & XER_MODELLED}
 
     def _set_ca(self, carry):
         self.xer = (self.xer & ~CA_BIT) | (CA_BIT if carry else 0)
@@ -699,7 +734,7 @@ class Machine:
         raise GuestFault(f"interpreter has no paired-single rule for {op}")
 
     def _set_cr0(self, value):
-        self.cr = cmp_field(self.cr, 0, s32(value), 0)
+        self.cr = cmp_field(self.cr, 0, s32(value), 0, self.xer >> 31)
 
     def _ea(self, insn, indexed=False):
         base = self.r[insn.ra] if insn.ra else 0
@@ -711,6 +746,9 @@ class Machine:
         op = insn.op
         r = self.r
         f = self.f
+        if op in EXT_OPS:
+            exec_ext(self, insn)
+            return
         if op in PS_OPS or op in ("psq_l", "psq_lu", "psq_st", "psq_stu"):
             self._exec_paired(insn)
             return
@@ -790,16 +828,18 @@ class Machine:
                 self._set_cr0(value)
             return
         if op == "cmp":
-            self.cr = cmp_field(self.cr, insn.crf, s32(r[insn.ra]), s32(r[insn.rb]))
+            self.cr = cmp_field(self.cr, insn.crf, s32(r[insn.ra]), s32(r[insn.rb]),
+                                 self.xer >> 31)
             return
         if op == "cmpl":
-            self.cr = cmp_field(self.cr, insn.crf, r[insn.ra], r[insn.rb])
+            self.cr = cmp_field(self.cr, insn.crf, r[insn.ra], r[insn.rb], self.xer >> 31)
             return
         if op == "cmpi":
-            self.cr = cmp_field(self.cr, insn.crf, s32(r[insn.ra]), insn.imm)
+            self.cr = cmp_field(self.cr, insn.crf, s32(r[insn.ra]), insn.imm, self.xer >> 31)
             return
         if op == "cmpli":
-            self.cr = cmp_field(self.cr, insn.crf, r[insn.ra], insn.imm & M32)
+            self.cr = cmp_field(self.cr, insn.crf, r[insn.ra], insn.imm & M32,
+                                 self.xer >> 31)
             return
         if op == "mfcr":
             r[insn.rd] = self.cr
@@ -902,3 +942,7 @@ class Machine:
                                    bits_to_double(f[insn.fa]), bits_to_double(f[insn.fb]))
             return
         raise GuestFault(f"interpreter has no rule for {op}")
+
+
+# Imported last: ppc_ext uses the helpers defined above.
+from .ppc_ext import EXT_OPS, decode_ext, exec_ext  # noqa: E402
