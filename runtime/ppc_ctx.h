@@ -25,6 +25,7 @@ typedef struct ppc_region {
     uint8_t *data;       /* flat region, or NULL when paged */
     uint8_t **pages;     /* paged region: one pointer per page, NULL until touched */
     uint32_t pages_used; /* paged region: number of allocated pages */
+    uint8_t alias;       /* shares another region's storage (cached/uncached mirror) */
 } ppc_region;
 
 struct ppc_ctx;
@@ -89,6 +90,7 @@ static inline void ppc_crash_report(ppc_ctx *c, const char *why) {
     uint64_t committed = 0;
     for (i = 0; i < c->nregions; i++) {
         ppc_region *g = &c->regions[i];
+        if (g->data && g->alias) continue;   /* a mirror of a flat region adds nothing */
         committed += g->data ? g->size : (uint64_t)g->pages_used * PPC_PAGE_SIZE;
     }
     fprintf(stderr, "\n=== spm3ds guest crash: %s ===\n", why);
@@ -206,6 +208,10 @@ static inline void ppc_w64(ppc_ctx *c, uint32_t ea, uint64_t v) {
 /* Paged regions (runtime/mem.c). ppc_map_paged maps [base, base+size) with no pages
  * allocated; size must be a multiple of PPC_PAGE_SIZE. Returns 0 on success. */
 int ppc_map_paged(ppc_ctx *c, uint32_t base, uint32_t size);
+/* Maps [alias_base, alias_base + size of the region at target_base) onto the same storage,
+ * for the Wii's cached/uncached mirrors (0xC0000000 = MEM1, 0xD0000000 = MEM2). Pages
+ * touched through either address are shared. Returns 0 on success. */
+int ppc_map_alias(ppc_ctx *c, uint32_t alias_base, uint32_t target_base);
 /* Bytes of host memory currently committed to paged regions. */
 size_t ppc_committed_bytes(const ppc_ctx *c);
 /* Frees all pages and page tables of paged regions. */
