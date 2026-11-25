@@ -25,18 +25,31 @@ typedef struct ppc_region {
     uint8_t *data;       /* flat region, or NULL when paged */
     uint8_t **pages;     /* paged region: one pointer per page, NULL until touched */
     uint32_t pages_used; /* paged region: number of allocated pages */
+    uint8_t alias;       /* shares another region's storage (cached/uncached mirror) */
 } ppc_region;
+
+struct ppc_ctx;
+/* Memory-mapped hardware hook, called for byte accesses to addresses no region maps.
+ * Returns 1 when the address belongs to emulated hardware (reads fill *byte), 0 otherwise.
+ * Wider accesses to unmapped addresses arrive as big-endian byte sequences. */
+typedef int (*ppc_mmio_fn)(struct ppc_ctx *c, uint32_t ea, uint8_t *byte, int is_write);
 
 typedef struct ppc_ctx {
     uint32_t r[32];
     uint64_t f[32];      /* FPR bit patterns; ppc_d() and ppc_b() convert */
     uint32_t lr, ctr, cr;
-    uint32_t xer;        /* only bit 29 (CA) is modelled */
+    uint32_t xer;        /* SO (bit 31), OV (bit 30) and CA (bit 29) are modelled */
+    uint32_t msr;        /* stored only; interrupts are not modelled */
+    uint32_t fpscr;      /* stored and moved; arithmetic does not set exception bits */
+    uint64_t tb;         /* time base read by mftb; the platform layer advances it */
+    uint32_t spr[1024];  /* SPRs without their own field (plain storage) */
     uint32_t gqr[8];     /* graphics quantization registers (SPRs 912..919) */
     uint32_t pc;         /* address of the last instruction started (PPC_DIAG) */
     uint64_t icount;     /* translated instructions executed (PPC_DIAG) */
     ppc_region regions[PPC_MAX_REGIONS];
     unsigned nregions;
+    ppc_mmio_fn mmio;    /* hardware registers and the GX FIFO (runtime/hw.c), or NULL */
+    void *mmio_user;
 } ppc_ctx;
 
 typedef void (*ppc_fn)(ppc_ctx *);
@@ -77,6 +90,7 @@ static inline void ppc_crash_report(ppc_ctx *c, const char *why) {
     uint64_t committed = 0;
     for (i = 0; i < c->nregions; i++) {
         ppc_region *g = &c->regions[i];
+        if (g->data && g->alias) continue;   /* a mirror of a flat region adds nothing */
         committed += g->data ? g->size : (uint64_t)g->pages_used * PPC_PAGE_SIZE;
     }
     fprintf(stderr, "\n=== spm3ds guest crash: %s ===\n", why);
@@ -100,15 +114,37 @@ static inline uint8_t *ppc_ptr(ppc_ctx *c, uint32_t ea, uint32_t n) {
     return p;
 }
 
-/* Emitted before each translated instruction. Define SPM3DS_NO_DIAG to remove the cost. */
-#ifdef SPM3DS_NO_DIAG
-#  define PPC_DIAG(addr) ((void)0)
-#else
+/* Guest diagnostics in generated code. SPM3DS_DIAG_LEVEL selects the cost:
+ *   2 (default): PPC_DIAG before every instruction sets c->pc and counts it; crash reports
+ *                name the exact instruction.
+ *   1:           PPC_BLOCK at the start of each basic block sets c->pc to the block start
+ *                and adds the block's instruction count; the total count is the same as
+ *                level 2, at a fraction of the cost (one update per block).
+ *   0:           no diagnostics (also selected by SPM3DS_NO_DIAG). */
+#ifndef SPM3DS_DIAG_LEVEL
+#  ifdef SPM3DS_NO_DIAG
+#    define SPM3DS_DIAG_LEVEL 0
+#  else
+#    define SPM3DS_DIAG_LEVEL 2
+#  endif
+#endif
+#if SPM3DS_DIAG_LEVEL >= 2
 #  define PPC_DIAG(addr) do { c->pc = (addr); c->icount++; } while (0)
+#  define PPC_BLOCK(addr, n) ((void)0)
+#elif SPM3DS_DIAG_LEVEL == 1
+#  define PPC_DIAG(addr) ((void)0)
+#  define PPC_BLOCK(addr, n) do { c->pc = (addr); c->icount += (n); } while (0)
+#else
+#  define PPC_DIAG(addr) ((void)0)
+#  define PPC_BLOCK(addr, n) ((void)0)
 #endif
 
 static inline uint32_t ppc_r8(ppc_ctx *c, uint32_t ea) {
-    return *ppc_ptr(c, ea, 1);
+    uint8_t *p = ppc_try(c, ea, 1);
+    uint8_t b = 0;
+    if (p) return *p;
+    if (c->mmio && c->mmio(c, ea, &b, 0)) return b;
+    return *ppc_ptr(c, ea, 1);   /* reports the fault */
 }
 
 static inline uint32_t ppc_r16(ppc_ctx *c, uint32_t ea) {
@@ -131,7 +167,11 @@ static inline uint64_t ppc_r64(ppc_ctx *c, uint32_t ea) {
 }
 
 static inline void ppc_w8(ppc_ctx *c, uint32_t ea, uint32_t v) {
-    *ppc_ptr(c, ea, 1) = (uint8_t)v;
+    uint8_t *p = ppc_try(c, ea, 1);
+    uint8_t b = (uint8_t)v;
+    if (p) { *p = b; return; }
+    if (c->mmio && c->mmio(c, ea, &b, 1)) return;
+    *ppc_ptr(c, ea, 1) = b;      /* reports the fault */
 }
 
 static inline void ppc_w16(ppc_ctx *c, uint32_t ea, uint32_t v) {
@@ -168,6 +208,10 @@ static inline void ppc_w64(ppc_ctx *c, uint32_t ea, uint64_t v) {
 /* Paged regions (runtime/mem.c). ppc_map_paged maps [base, base+size) with no pages
  * allocated; size must be a multiple of PPC_PAGE_SIZE. Returns 0 on success. */
 int ppc_map_paged(ppc_ctx *c, uint32_t base, uint32_t size);
+/* Maps [alias_base, alias_base + size of the region at target_base) onto the same storage,
+ * for the Wii's cached/uncached mirrors (0xC0000000 = MEM1, 0xD0000000 = MEM2). Pages
+ * touched through either address are shared. Returns 0 on success. */
+int ppc_map_alias(ppc_ctx *c, uint32_t alias_base, uint32_t target_base);
 /* Bytes of host memory currently committed to paged regions. */
 size_t ppc_committed_bytes(const ppc_ctx *c);
 /* Frees all pages and page tables of paged regions. */
@@ -215,6 +259,33 @@ static inline uint64_t ppc_fctiwz(double x) {
     return 0xFFF8000000000000ull | (uint32_t)v;
 }
 
+/* Exact reciprocal and reciprocal square root (hardware returns estimates; see ppc_ext.py). */
+static inline double ppc_fres(double b) {
+    return ppc_round_single(1.0 / b);
+}
+
+static inline double ppc_frsqrte(double b) {
+    if (b != b) return b;
+    if (b < 0.0) return ppc_d(0x7FF8000000000000ull);
+    if (b == 0.0) return copysign(INFINITY, b);
+    if (isinf(b)) return 0.0;
+    return 1.0 / sqrt(b);
+}
+
+/* Round to nearest even (FPSCR RN is not modelled), saturate, NaN -> INT32_MIN. */
+static inline uint64_t ppc_fctiw(double x) {
+    int32_t v;
+    double r;
+    if (x != x) v = INT32_MIN;
+    else {
+        r = rint(x);
+        if (r >= 2147483648.0) v = INT32_MAX;
+        else if (r < -2147483648.0) v = INT32_MIN;
+        else v = (int32_t)r;
+    }
+    return 0xFFF8000000000000ull | (uint32_t)v;
+}
+
 static inline uint32_t ppc_fcmp(uint32_t cr, unsigned crf, double a, double b) {
     unsigned shift = 28u - 4u * crf;
     uint32_t field;
@@ -225,16 +296,56 @@ static inline uint32_t ppc_fcmp(uint32_t cr, unsigned crf, double a, double b) {
 
 /* ---- integer ---- */
 
-static inline uint32_t ppc_cmp_s(uint32_t cr, unsigned crf, int32_t a, int32_t b) {
+/* Integer compares copy XER.SO (bit 31 of xer) into the low bit of the CR field. */
+static inline uint32_t ppc_cmp_s(uint32_t cr, unsigned crf, int32_t a, int32_t b, uint32_t xer) {
     unsigned shift = 28u - 4u * crf;
-    uint32_t field = a < b ? 8u : (a > b ? 4u : 2u);
+    uint32_t field = (a < b ? 8u : (a > b ? 4u : 2u)) | (xer >> 31);
     return (cr & ~(0xFu << shift)) | (field << shift);
 }
 
-static inline uint32_t ppc_cmp_u(uint32_t cr, unsigned crf, uint32_t a, uint32_t b) {
+static inline uint32_t ppc_cmp_u(uint32_t cr, unsigned crf, uint32_t a, uint32_t b, uint32_t xer) {
     unsigned shift = 28u - 4u * crf;
-    uint32_t field = a < b ? 8u : (a > b ? 4u : 2u);
+    uint32_t field = (a < b ? 8u : (a > b ? 4u : 2u)) | (xer >> 31);
     return (cr & ~(0xFu << shift)) | (field << shift);
+}
+
+/* ---- CR and FPSCR bit and field access (bit 0 is the most significant) ---- */
+
+static inline uint32_t ppc_crbit(uint32_t cr, unsigned bit) {
+    return (cr >> (31u - bit)) & 1u;
+}
+
+static inline uint32_t ppc_set_crbit(uint32_t cr, unsigned bit, uint32_t v) {
+    unsigned sh = 31u - bit;
+    return (cr & ~(1u << sh)) | ((v & 1u) << sh);
+}
+
+static inline uint32_t ppc_set_crfield(uint32_t cr, unsigned field, uint32_t v) {
+    unsigned sh = 28u - 4u * field;
+    return (cr & ~(0xFu << sh)) | ((v & 0xFu) << sh);
+}
+
+/* ---- overflow (XER.OV bit 30, sticky XER.SO bit 31) ---- */
+
+static inline void ppc_set_ov(ppc_ctx *c, uint32_t ov) {
+    if (ov) c->xer |= 0xC0000000u;
+    else c->xer &= ~0x40000000u;
+}
+
+/* ---- byte reversal, cache block zero ---- */
+
+static inline uint32_t ppc_bswap16(uint32_t v) {
+    return ((v & 0xFFu) << 8) | ((v >> 8) & 0xFFu);
+}
+
+static inline uint32_t ppc_bswap32(uint32_t v) {
+    return (v << 24) | ((v & 0xFF00u) << 8) | ((v >> 8) & 0xFF00u) | (v >> 24);
+}
+
+static inline void ppc_dcbz(ppc_ctx *c, uint32_t ea) {
+    uint32_t i;
+    ea &= ~31u;
+    for (i = 0; i < 32u; i += 4u) ppc_w32(c, ea + i, 0u);
 }
 
 static inline uint32_t ppc_rotl32(uint32_t x, uint32_t n) {
@@ -388,7 +499,7 @@ static inline uint64_t ppc_psq_load(ppc_ctx *c, uint32_t ea, unsigned idx, int w
         unsigned size = (kind == 4u || kind == 6u) ? 1u : 2u;
         int is_signed = kind >= 6u;
         if (kind < 4u || kind > 7u) {
-            fprintf(stderr, "psq_l: load type %u is reserved\n", kind);
+            fprintf(stderr, "psq_l: load type %u is reserved\n", (unsigned)kind);
             abort();
         }
         hi = ppc_s_b(ppc_dequant(size == 1u ? ppc_r8(c, ea) : ppc_r16(c, ea), size, is_signed, scale));
@@ -413,7 +524,7 @@ static inline void ppc_psq_store(ppc_ctx *c, uint32_t ea, uint64_t f, unsigned i
         return;
     }
     if (kind < 4u || kind > 7u) {
-        fprintf(stderr, "psq_st: store type %u is reserved\n", kind);
+        fprintf(stderr, "psq_st: store type %u is reserved\n", (unsigned)kind);
         abort();
     }
     {

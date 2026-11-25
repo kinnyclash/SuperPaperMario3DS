@@ -124,7 +124,14 @@ void hle_OSFreeToHeap(ppc_ctx *c) {
 #define OS_TB_NUM 243u
 #define OS_TB_DEN 4000u
 
+/* Default clock: wall time where available (alarms need time to pass while the scheduler
+ * sleeps), else processor time. The 3DS app installs the system tick (main.c). */
 static uint64_t default_now_ns(void) {
+#if defined(TIME_UTC) && !defined(__3DS__)
+    struct timespec ts;
+    if (timespec_get(&ts, TIME_UTC) == TIME_UTC)
+        return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+#endif
     return (uint64_t)clock() * (1000000000ull / CLOCKS_PER_SEC);
 }
 
@@ -138,6 +145,14 @@ static uint64_t timebase(void) {
     uint64_t ns = now_ns();
     /* Split to avoid overflow: ns * 243 can exceed 64 bits after long uptimes. */
     return (ns / OS_TB_DEN) * OS_TB_NUM + ((ns % OS_TB_DEN) * OS_TB_NUM) / OS_TB_DEN;
+}
+
+uint64_t spm3ds_os_timebase(void) {
+    return timebase();
+}
+
+uint64_t spm3ds_os_ticks_to_ns(uint64_t ticks) {
+    return (ticks / OS_TB_NUM) * OS_TB_DEN + ((ticks % OS_TB_NUM) * OS_TB_DEN) / OS_TB_NUM;
 }
 
 /* OSGetTick(): low 32 bits of the timebase. */
