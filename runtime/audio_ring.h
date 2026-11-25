@@ -53,4 +53,24 @@ static inline uint32_t spm3ds_ring_read(spm3ds_ring *r, int16_t *dst, uint32_t n
     return k;
 }
 
+/* Writes `frames` stereo frames (interleaved left, right) of a sine tone into dst and
+ * advances *phase (cycles, 0..1). Used for the audio output test on the console. */
+static inline void spm3ds_tone_fill(int16_t *dst, uint32_t frames, float *phase, float freq,
+                                    float rate, int16_t amplitude) {
+    uint32_t i;
+    float step = freq / rate;
+    for (i = 0; i < frames; i++) {
+        /* Parabolic sine approximation: within 0.1% of sin over a full cycle, no libm. */
+        float x = *phase * 2.0f - 1.0f;                  /* -1..1 maps to -pi..pi */
+        float y = 4.0f * x * (1.0f - (x < 0.0f ? -x : x));
+        int16_t v;
+        y = 0.225f * (y * (y < 0.0f ? -y : y) - y) + y;
+        v = (int16_t)(-y * (float)amplitude);
+        dst[2 * i] = v;
+        dst[2 * i + 1] = v;
+        *phase += step;
+        if (*phase >= 1.0f) *phase -= 1.0f;
+    }
+}
+
 #endif
