@@ -52,6 +52,8 @@ CFLAGS  := -g -Wall -O2 -mword-relocations -ffunction-sections $(ARCH) -D__3DS__
 CFLAGS  += $(foreach d,$(INCLUDES),-I$(CURDIR)/$(d)) \
            $(foreach d,$(LIBDIRS),-I$(d)/include) \
            -I$(RUNTIME) -I$(CURDIR)/$(BUILD)
+# Extra flags from the command line, e.g. `make EXTRA_CFLAGS=-Werror` (CI uses this).
+CFLAGS  += $(EXTRA_CFLAGS)
 LDFLAGS := -specs=3dsx.specs -g $(ARCH) $(foreach d,$(LIBDIRS),-L$(d)/lib)
 
 # ---- sources and objects ----------------------------------------------------
@@ -104,8 +106,9 @@ $(BUILD)/%_shbin.h: $(BUILD)/%.shbin
 	@echo "extern const u8" $(*F)_shbin"[];"     >> $@
 	@echo "extern const u32" $(*F)_shbin_size";" >> $@
 
+# -a 4: DVLB_ParseFile reads the shader binary as u32 words, so it must be 4-byte aligned.
 $(BUILD)/%.shbin.o: $(BUILD)/%.shbin $(BUILD)/%_shbin.h
-	bin2s $< | $(AS) -o $@
+	bin2s -a 4 $< | $(AS) -o $@
 
 -include $(DEP)
 
