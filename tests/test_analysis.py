@@ -74,13 +74,13 @@ class Sweep(unittest.TestCase):
     """The linear sweep reports every undecodable word, reachable or not."""
 
     def test_reports_every_unsupported_word_in_order(self):
-        words = [h.addi(3, 0, 1), 0x10000000, h.addi(4, 0, 2), 0x10000004, h.BLR]
+        words = [h.addi(3, 0, 1), 0x04000000, h.addi(4, 0, 2), 0x04000004, h.BLR]
         failures = sweep(program_image(words, CODE_BASE))
         self.assertEqual([addr for addr, _, _ in failures], [CODE_BASE + 4, CODE_BASE + 12])
-        self.assertEqual(failures[0][1], 0x10000000)
+        self.assertEqual(failures[0][1], 0x04000000)
 
     def test_dead_code_is_swept_but_not_fatal_for_reachability(self):
-        words = [h.b(8), 0x10000000, h.BLR]  # the unsupported word is jumped over
+        words = [h.b(8), 0x04000000, h.BLR]  # the unsupported word is jumped over
         image = program_image(words, CODE_BASE)
         self.assertEqual([addr for addr, _, _ in sweep(image)], [CODE_BASE + 4])
         self.assertEqual(analyze(image, CODE_BASE).fatal, [])
@@ -88,7 +88,7 @@ class Sweep(unittest.TestCase):
 
 class Problems(unittest.TestCase):
     def test_unsupported_on_a_live_path_is_fatal(self):
-        words = [h.addi(3, 0, 1), 0x10000000, h.BLR]
+        words = [h.addi(3, 0, 1), 0x04000000, h.BLR]
         result = analyze(program_image(words, CODE_BASE), CODE_BASE)
         self.assertEqual([p.kind for p in result.fatal], ["unsupported"])
 
@@ -105,7 +105,7 @@ class Problems(unittest.TestCase):
         self.assertTrue(any(p.kind == "unresolved_call" for p in result.fatal))
 
     def test_compile_refuses_and_names_the_address(self):
-        words = [0x10000000, h.BLR]
+        words = [0x04000000, h.BLR]
         with self.assertRaises(CompileError) as ctx:
             generate_c(program_image(words, CODE_BASE), CODE_BASE)
         message = str(ctx.exception)
@@ -127,7 +127,7 @@ class CommandLine(unittest.TestCase):
     def test_analyze_mode_reports_and_compile_mode_refuses(self):
         from spm3ds.recomp import main
         from tests.helpers import build_dol
-        blob = build_dol([(CODE_BASE, [h.addi(3, 0, 1), 0x10000000, h.BLR])], CODE_BASE)
+        blob = build_dol([(CODE_BASE, [h.addi(3, 0, 1), 0x04000000, h.BLR])], CODE_BASE)
         with tempfile.TemporaryDirectory() as tmp:
             dol_path = os.path.join(tmp, "main.dol")
             with open(dol_path, "wb") as f:

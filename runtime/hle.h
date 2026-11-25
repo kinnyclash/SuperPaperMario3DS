@@ -26,8 +26,20 @@ void hle_spm3ds_FSSize(ppc_ctx *c);
 void hle_spm3ds_FSRead(ppc_ctx *c);
 void hle_spm3ds_FSClose(ppc_ctx *c);
 
+/* Video: provided by the platform (the 3DS game app presents a frame here). */
+void hle_VIWaitForRetrace(ppc_ctx *c);
+
+/* Disc file access (runtime/dvd.c). */
+#include "dvd.h"
+
+/* Threads, message queues, mutexes, condition variables and alarms (runtime/os_thread.c). */
+#include "os_thread.h"
+
 /* Platform hooks (see runtime/os.c). */
 void spm3ds_set_clock(uint64_t (*source_ns)(void));
+/* Guest time base in ticks (60.75 MHz, see os.c) and its conversion to nanoseconds. */
+uint64_t spm3ds_os_timebase(void);
+uint64_t spm3ds_os_ticks_to_ns(uint64_t ticks);
 void spm3ds_fs_set_root(const char *dir);
 
 #endif /* SPM3DS_HLE_H */

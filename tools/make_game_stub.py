@@ -1,0 +1,91 @@
+"""Build a stand-in "game" for the 3DS game app (make APP=game) when no real main.dol is
+available: in CI, and to test the boot path on the console without the game.
+
+The stub is a tiny DOL whose code loops forever: it draws a coloured triangle through GX
+(stores to the write-gather pipe) and calls VIWaitForRetrace, which the game app implements
+by presenting the frame. Its translated C is written the same way as for a real game
+(`python -m spm3ds.recomp compile main.dol DIR --split N --game-info`), so the app is built
+from exactly the files a real build uses. No game code or data is involved.
+
+Usage:
+  python3 tools/make_game_stub.py OUTPUT_DIR [--dol stub.dol]
+
+Writes OUTPUT_DIR/game_decls.h, game_0000.c, game_dispatch.c and game_info.c, and, with
+--dol, the stub DOL itself (copy it to sdmc:/spm3ds/disc/sys/main.dol to try the app).
+"""
+import argparse
+import os
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "tools"))
+
+from make_gx_demo import Emitter  # noqa: E402
+from spm3ds.recomp import game_info_source, generate_units  # noqa: E402
+from tests.helpers import b, bl, build_dol, program_image  # noqa: E402
+
+CODE_BASE = 0x80004000
+VI_WAIT = 0x80003F00          # address bound to VIWaitForRetrace (outside the text)
+
+
+def program():
+    e = Emitter()                       # r3 = write-gather pipe
+    loop = len(e.words)
+    # Orthographic projection over x, y in [0, 1]; identity position matrix 0.
+    e.xf_header(0x1020, 7)
+    for v in (2.0, -1.0, 2.0, -1.0, -1.0, -1.0):
+        e.f32(v)
+    e.u32(1)                            # orthographic
+    e.xf_header(0x0000, 12)
+    for v in (1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0):
+        e.f32(float(v))
+    e.cp(0x30, 0)
+    e.bp(0x00000000)                    # no culling, one TEV stage, no TEV setup
+    e.cp(0x50, (1 << 9) | (1 << 13))    # POS and CLR0 direct
+    e.cp(0x60, 0)
+    e.cp(0x70, 1 | (4 << 1) | (1 << 13) | (5 << 14))
+    e.cp(0x80, 0)
+    e.cp(0x90, 0)
+    e.u8(0x90)                          # GX_TRIANGLES, VAT 0
+    e.u16(3)
+    for x, y, rgba in ((0.1, 0.1, 0xE04040FF), (0.9, 0.1, 0x40E040FF), (0.5, 0.9, 0x4040E0FF)):
+        e.f32(x)
+        e.f32(y)
+        e.f32(-0.5)
+        e.u32(rgba)
+    here = len(e.words)
+    e.words.append(bl(VI_WAIT - (CODE_BASE + 4 * here)))
+    here = len(e.words)
+    e.words.append(b(4 * (loop - here)))
+    return e.words
+
+
+def build(out_dir, dol_path=None):
+    words = program()
+    dol = build_dol([(CODE_BASE, words)], CODE_BASE)
+    files = generate_units(program_image(words, CODE_BASE), CODE_BASE,
+                           {VI_WAIT: "VIWaitForRetrace"}, functions_per_unit=400, prefix="game")
+    files["game_info.c"] = game_info_source(dol, CODE_BASE)
+    os.makedirs(out_dir, exist_ok=True)
+    for name, text in files.items():
+        with open(os.path.join(out_dir, name), "w", encoding="utf-8") as f:
+            f.write(text)
+    if dol_path:
+        with open(dol_path, "wb") as f:
+            f.write(dol)
+    return dol, files
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("out_dir")
+    ap.add_argument("--dol")
+    args = ap.parse_args(argv[1:])
+    _, files = build(args.out_dir, args.dol)
+    print(f"wrote {len(files)} files to {args.out_dir}" + (f" and {args.dol}" if args.dol else ""))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

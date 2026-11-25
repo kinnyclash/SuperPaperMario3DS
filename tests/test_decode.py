@@ -126,13 +126,14 @@ class FieldSweep(unittest.TestCase):
 
 
 class Rejections(unittest.TestCase):
-    def test_paired_singles_rejected(self):
+    def test_reserved_primary_opcode_rejected(self):
         with self.assertRaises(Unsupported):
-            decode(0x10000000, 0)  # primary opcode 4
+            decode(0x04000000, 0)  # primary opcode 1 is reserved
 
-    def test_oe_forms_rejected(self):
+    def test_oe_on_multiply_high_rejected(self):
+        # mulhw has no OE form: bit 21 is reserved, so OE=1 is not a valid encoding.
         with self.assertRaises(Unsupported):
-            decode(h.enc_xo(31, 3, 4, 5, 1, 266), 0)
+            decode(h.enc_xo(31, 3, 4, 5, 1, 75), 0)
 
     def test_update_form_with_zero_base_rejected(self):
         with self.assertRaises(Unsupported):
