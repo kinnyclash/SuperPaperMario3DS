@@ -363,5 +363,83 @@ class RenderState(unittest.TestCase):
         self.assertAlmostEqual(b, 0.0)
 
 
+
+def rgb565_texture_4x4():
+    """One 4x4 RGB565 tile (row-major, big-endian): texel (x, y) = (r5 = 8x, g6 = 16y, b5 = 31)."""
+    data = b"".join(struct.pack(">H", ((8 * x) << 11) | ((16 * y) << 5) | 31)
+                    for y in range(4) for x in range(4))
+    def exp5(v):
+        return (v << 3) | (v >> 2)
+    def exp6(v):
+        return (v << 2) | (v >> 4)
+    want = [[(exp5(8 * x), exp6(16 * y), exp5(31), 255) for x in range(4)] for y in range(4)]
+    return data, want
+
+
+def texture_tev(s, texmap=0):
+    s.SetCullMode(g.GX_CULL_NONE)
+    s.SetNumTevStages(1)
+    s.SetTevOrder(0, 0, texmap, g.GX_COLOR0A0)
+    s.SetTevColorIn(0, "ZERO", "ZERO", "ZERO", "TEXC")
+    s.SetTevAlphaIn(0, "ZERO", "ZERO", "ZERO", "TEXA")
+    s.SetTevColorOp(0, g.GX_TEV_ADD, 0, 0, 1, g.GX_TEVPREV)
+    s.SetTevAlphaOp(0, g.GX_TEV_ADD, 0, 0, 1, g.GX_TEVPREV)
+
+
+class Textures(unittest.TestCase):
+    def test_texture_map_from_bp_registers(self):
+        data, want = rgb565_texture_4x4()
+        mem = Memory()
+        mem.put(0x00400000, data)
+
+        def extra(s):
+            s.LoadTexObj(0, 0x00400000, 4, 4, 4, 0, 0)    # GX_TF_RGB565, clamp
+            texture_tev(s)
+        cp = CommandProcessor(4, 4, read_memory=mem.read).run(quad_stream(extra=extra).data())
+        fb = Framebuffer(4, 4)
+        # 16 pixels: the default depth test (less) rejects the diagonal on the second triangle.
+        self.assertEqual(cp.render(fb), 16)
+        for y in range(4):
+            for x in range(4):
+                got = tuple(round(v * 255) for v in fb.pixel(x, y))
+                self.assertEqual(got, want[y][x], (x, y))
+
+    def test_texture_registers_decode(self):
+        s = GXStream()
+        s.LoadTexObj(5, 0x01234560, 640, 480, 14, 1, 2)
+        cp = CommandProcessor(4, 4).run(s.data())
+        img = regs.decode_tex_image(cp.bp[0xA9], cp.bp[0xB5])
+        self.assertEqual((img.width, img.height, img.fmt, img.address), (640, 480, 14, 0x01234560))
+        self.assertEqual(regs.decode_tex_mode0(cp.bp[0xA1])[:2], ("repeat", "mirror"))
+
+    def test_decoded_texture_is_cached(self):
+        data, _ = rgb565_texture_4x4()
+        reads = []
+        mem = Memory()
+        mem.put(0x00400000, data)
+
+        def counting_read(addr, n):
+            reads.append(addr)
+            return mem.read(addr, n)
+        s = GXStream()
+        s.LoadTexObj(0, 0x00400000, 4, 4, 4, 0, 0)
+        cp = CommandProcessor(4, 4, read_memory=counting_read).run(s.data())
+        self.assertIs(cp.texture_for_map(0), cp.texture_for_map(0))
+        self.assertEqual(len(reads), 1)
+
+    def test_palette_formats_are_reported(self):
+        s = GXStream()
+        s.LoadTexObj(0, 0x00400000, 8, 8, 9, 0, 0)       # GX_TF_CI8 needs a palette
+        cp = CommandProcessor(4, 4, read_memory=Memory().read).run(s.data())
+        self.assertIsNone(cp.texture_for_map(0))
+        self.assertEqual(cp.unsupported["texture_format_9"], 1)
+
+    def test_mirror_wrap(self):
+        tex = Texture([[(0, 0, 0, 255), (255, 255, 255, 255)]], wrap="mirror")
+        # u in [1, 2) mirrors back: texel 1 then texel 0.
+        self.assertEqual(tex.sample(1.25, 0.0)[0], 1.0)
+        self.assertEqual(tex.sample(1.75, 0.0)[0], 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -203,3 +203,35 @@ def decode_color(raw, fmt):
         v = int.from_bytes(raw[:3], "big")
         return tuple(x6((v >> s) & 63) for s in (18, 12, 6, 0))
     return (raw[0], raw[1], raw[2], raw[3])  # RGBA8
+
+
+# ---- texture maps (libogc GX_InitTexObj, GX_LoadTexObjPreloaded) -------------------------
+# BP register numbers per texture map 0..7: _gxtexmode0ids, _gxteximg0ids, _gxteximg3ids.
+TEX_MODE0 = (0x80, 0x81, 0x82, 0x83, 0xA0, 0xA1, 0xA2, 0xA3)
+TEX_IMAGE0 = (0x88, 0x89, 0x8A, 0x8B, 0xA8, 0xA9, 0xAA, 0xAB)
+TEX_IMAGE3 = (0x94, 0x95, 0x96, 0x97, 0xB4, 0xB5, 0xB6, 0xB7)
+# GX_TF_* (gc/ogc/gx.h) for the formats spm3ds/gx/textures.py decodes; CI4/CI8/CI14 need
+# palettes (TLUT) and are not supported yet.
+TEX_FORMATS = {0: "I4", 1: "I8", 2: "IA4", 3: "IA8", 4: "RGB565", 5: "RGB5A3", 6: "RGBA8",
+               14: "CMPR"}
+WRAP = {0: "clamp", 1: "repeat", 2: "mirror"}  # GX_CLAMP, GX_REPEAT, GX_MIRROR
+
+
+@dataclass
+class TexImage:
+    width: int
+    height: int
+    fmt: int
+    address: int      # physical
+
+
+def decode_tex_mode0(v):
+    """(wrap_s, wrap_t, mag_linear, min_filter) from texture mode 0."""
+    return WRAP.get(bits(v, 0, 2), "clamp"), WRAP.get(bits(v, 2, 2), "clamp"), \
+        bool(bits(v, 4, 1)), bits(v, 5, 3)
+
+
+def decode_tex_image(image0, image3):
+    """Size and format from image 0; the physical address (shifted right by 5) from image 3."""
+    return TexImage(bits(image0, 0, 10) + 1, bits(image0, 10, 10) + 1, bits(image0, 20, 4),
+                    (image3 & 0xFFFFFF) << 5)

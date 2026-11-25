@@ -19,6 +19,9 @@ class Texture:
     def _index(self, i, n):
         if self.wrap == "repeat":
             return i % n
+        if self.wrap == "mirror":
+            i %= 2 * n
+            return i if i < n else 2 * n - 1 - i
         return min(max(i, 0), n - 1)
 
     def sample(self, u, v):

@@ -87,6 +87,7 @@ class CommandProcessor:
         self.unsupported = Counter()
         self.commands = 0
         self._bp_mask = 0xFFFFFF
+        self._textures = {}        # (address, format, width, height, wrap) -> Texture
 
     # ---- configuration (API, not command stream) ----
     def set_vertex_format(self, index, fmt):
@@ -351,6 +352,40 @@ class CommandProcessor:
             reg_file.append(tuple(v / 255.0 for v in regs.decode_tev_reg_pair(lo, hi)))
         return stages, reg_file
 
+    # ---- textures ----
+    def texture_for_map(self, texmap):
+        """Decode texture map 0..7 from guest memory (cached), or None if it is not usable."""
+        from .raster import Texture
+        from .textures import FORMATS, decode
+        if texmap > 7 or self.read_memory is None:
+            return None
+        if regs.TEX_IMAGE0[texmap] not in self.bp or regs.TEX_IMAGE3[texmap] not in self.bp:
+            return None
+        img = regs.decode_tex_image(self.bp[regs.TEX_IMAGE0[texmap]],
+                                    self.bp[regs.TEX_IMAGE3[texmap]])
+        wrap_s, _, _, _ = regs.decode_tex_mode0(self.bp.get(regs.TEX_MODE0[texmap], 0))
+        name = regs.TEX_FORMATS.get(img.fmt)
+        if name is None:
+            self.unsupported[f"texture_format_{img.fmt}"] += 1
+            return None
+        key = (img.address, img.fmt, img.width, img.height, wrap_s)
+        if key not in self._textures:
+            f = FORMATS[name]
+            tiles = (-(-img.width // f.tile_w)) * (-(-img.height // f.tile_h))
+            data = self.read_memory(img.address, tiles * f.tile_bytes)
+            self._textures[key] = Texture(decode(name, data, img.width, img.height), wrap=wrap_s)
+        return self._textures[key]
+
+    def _tev_texture(self, stages):
+        """The single texture the software renderer can use: the first enabled TEV texmap."""
+        maps = {order.texmap for _, _, order in stages if order.tex_enable}
+        if len(maps) > 1:
+            self.unsupported["multiple_texture_maps"] += 1
+        for _, _, order in stages:
+            if order.tex_enable:
+                return self.texture_for_map(order.texmap)
+        return None
+
     # ---- rendering ----
     def render(self, fb, texture=None, blend=False, depth_test=True):
         """Rasterize every assembled triangle into a framebuffer, applying the cull mode.
@@ -377,6 +412,8 @@ class CommandProcessor:
         shader = None
         if setup is not None:
             shader = make_shader(setup[0], setup[1], self.unsupported)
+            if texture is None:
+                texture = self._tev_texture(setup[0])
         written = 0
         for tri in self.triangles:
             a, b, c = tri

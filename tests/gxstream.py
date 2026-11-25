@@ -191,6 +191,18 @@ class GXStream:
         self.bp(((0xE0 + 2 * reg) << 24) | _sh(a, 12, 8) | (r & 0xFF))
         self.bp(((0xE1 + 2 * reg) << 24) | _sh(g, 12, 8) | (b & 0xFF))
 
+    # ---- textures (GX_InitTexObj + GX_LoadTexObj for map `mapid`) ----
+    def LoadTexObj(self, mapid, phys, wd, ht, fmt, wrap_s, wrap_t):
+        mode0 = (wrap_s & 3) | _sh(wrap_t, 2, 2) | 0x10 | 0x80   # mag linear, min linear
+        image0 = ((wd - 1) & 0x3FF) | _sh(ht - 1, 10, 10) | _sh(fmt, 20, 4)
+        image3 = (phys >> 5) & 0xFFFFFF
+        ids = {"mode0": [0x80, 0x81, 0x82, 0x83, 0xA0, 0xA1, 0xA2, 0xA3],
+               "image0": [0x88, 0x89, 0x8A, 0x8B, 0xA8, 0xA9, 0xAA, 0xAB],
+               "image3": [0x94, 0x95, 0x96, 0x97, 0xB4, 0xB5, 0xB6, 0xB7]}
+        self.bp((ids["mode0"][mapid] << 24) | mode0)
+        self.bp((ids["image0"][mapid] << 24) | image0)
+        self.bp((ids["image3"][mapid] << 24) | image3)
+
     # ---- drawing ----
     def Begin(self, prim, fmt, count):
         self.out += bytes([prim | (fmt & 7)]) + struct.pack(">H", count)
