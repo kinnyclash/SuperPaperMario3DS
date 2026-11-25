@@ -40,6 +40,10 @@ def shader_stub(name):
             f"extern const u32 {name}_shbin_size;\n")
 
 
+# Runtime files each app links (kept in step with platform/3ds/Makefile, RUNTIME_SRC).
+RUNTIME_FILES = {"cpu": ("hle.c", "os.c", "mem.c", "hw.c"), "gfx": ("hw.c", "gx_cp.c")}
+
+
 def app_sources(app):
     """C files the Makefile compiles for an app (mirrors platform/3ds/Makefile)."""
     dirs = {"cpu": ["source/cpu", "source/generated"], "gfx": ["source/gfx"]}[app]
@@ -48,17 +52,8 @@ def app_sources(app):
         full = os.path.join(PLATFORM, d)
         for dirpath, _, names in os.walk(full):
             files += [os.path.join(dirpath, n) for n in sorted(names) if n.endswith(".c")]
-    if app == "cpu":
-        files += [os.path.join(RUNTIME, n) for n in ("hle.c", "os.c", "mem.c")
-                  if os.path.exists(os.path.join(RUNTIME, n))]
-        files += [os.path.join(RUNTIME, n) for n in sorted(os.listdir(RUNTIME))
-                  if n.endswith(".c") and n not in ("hle.c", "os.c", "mem.c")
-                  and n in CPU_EXTRA_RUNTIME]
+    files += [os.path.join(RUNTIME, n) for n in RUNTIME_FILES[app]]
     return files
-
-
-# Runtime files added to the CPU app after hle.c, os.c and mem.c (kept in step with the Makefile).
-CPU_EXTRA_RUNTIME = ("gx_fifo.c", "os_thread.c", "dvd.c")
 
 
 def shader_names(app):

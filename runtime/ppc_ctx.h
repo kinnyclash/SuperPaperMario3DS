@@ -27,6 +27,12 @@ typedef struct ppc_region {
     uint32_t pages_used; /* paged region: number of allocated pages */
 } ppc_region;
 
+struct ppc_ctx;
+/* Memory-mapped hardware hook, called for byte accesses to addresses no region maps.
+ * Returns 1 when the address belongs to emulated hardware (reads fill *byte), 0 otherwise.
+ * Wider accesses to unmapped addresses arrive as big-endian byte sequences. */
+typedef int (*ppc_mmio_fn)(struct ppc_ctx *c, uint32_t ea, uint8_t *byte, int is_write);
+
 typedef struct ppc_ctx {
     uint32_t r[32];
     uint64_t f[32];      /* FPR bit patterns; ppc_d() and ppc_b() convert */
@@ -41,6 +47,8 @@ typedef struct ppc_ctx {
     uint64_t icount;     /* translated instructions executed (PPC_DIAG) */
     ppc_region regions[PPC_MAX_REGIONS];
     unsigned nregions;
+    ppc_mmio_fn mmio;    /* hardware registers and the GX FIFO (runtime/hw.c), or NULL */
+    void *mmio_user;
 } ppc_ctx;
 
 typedef void (*ppc_fn)(ppc_ctx *);
@@ -112,7 +120,11 @@ static inline uint8_t *ppc_ptr(ppc_ctx *c, uint32_t ea, uint32_t n) {
 #endif
 
 static inline uint32_t ppc_r8(ppc_ctx *c, uint32_t ea) {
-    return *ppc_ptr(c, ea, 1);
+    uint8_t *p = ppc_try(c, ea, 1);
+    uint8_t b = 0;
+    if (p) return *p;
+    if (c->mmio && c->mmio(c, ea, &b, 0)) return b;
+    return *ppc_ptr(c, ea, 1);   /* reports the fault */
 }
 
 static inline uint32_t ppc_r16(ppc_ctx *c, uint32_t ea) {
@@ -135,7 +147,11 @@ static inline uint64_t ppc_r64(ppc_ctx *c, uint32_t ea) {
 }
 
 static inline void ppc_w8(ppc_ctx *c, uint32_t ea, uint32_t v) {
-    *ppc_ptr(c, ea, 1) = (uint8_t)v;
+    uint8_t *p = ppc_try(c, ea, 1);
+    uint8_t b = (uint8_t)v;
+    if (p) { *p = b; return; }
+    if (c->mmio && c->mmio(c, ea, &b, 1)) return;
+    *ppc_ptr(c, ea, 1) = b;      /* reports the fault */
 }
 
 static inline void ppc_w16(ppc_ctx *c, uint32_t ea, uint32_t v) {

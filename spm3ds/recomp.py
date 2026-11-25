@@ -387,13 +387,17 @@ def generate_c(image, entry, external_names=None, strict=True, seeds=(), jump_ta
     return "\n".join(out) + "\n"
 
 
-def harness_source(entry, memmap, init=(), dumps=()):
+def harness_source(entry, memmap, init=(), dumps=(), includes=(), before=(), after=()):
     """A C main() that runs `entry` on a fresh context and prints the final state.
 
     `memmap` supplies the regions. `init` is a list of (address, bytes) written before the
     run. `dumps` is a list of (address, length) printed after the run as "m ADDR BYTES".
+    `includes` are extra headers; `before` and `after` are C statements run before the guest
+    entry and after the state is printed (the context is `c`).
     """
-    lines = ["#include <stdio.h>", "#include <string.h>", '#include "ppc_ctx.h"', ""]
+    lines = ["#include <stdio.h>", "#include <string.h>", '#include "ppc_ctx.h"']
+    lines += [f'#include "{h}"' for h in includes]
+    lines.append("")
     for i, region in enumerate(memmap.regions):
         lines.append(f"static uint8_t region_{i}[{region.size}];")
     lines.append("int main(void) {")
@@ -408,6 +412,7 @@ def harness_source(entry, memmap, init=(), dumps=()):
         values = ", ".join(f"0x{b:02X}" for b in data)
         lines.append(f"    {{ static const uint8_t init_{k}[] = {{ {values} }}; "
                      f"memcpy(ppc_ptr(&c, 0x{address:08X}u, {len(data)}), init_{k}, {len(data)}); }}")
+    lines += [f"    {stmt}" for stmt in before]
     lines.append(f"    {fn_name(entry)}(&c);")
     lines.append('    for (int i = 0; i < 32; i++) printf("r%d %08x\\n", i, (unsigned)c.r[i]);')
     lines.append('    for (int i = 0; i < 32; i++) printf("f%d %016llx\\n", i, (unsigned long long)c.f[i]);')
@@ -417,6 +422,7 @@ def harness_source(entry, memmap, init=(), dumps=()):
         lines.append(f"    {{ const uint8_t *p = ppc_ptr(&c, 0x{address:08X}u, {length}); "
                      f'printf("m %08x", 0x{address:08X}u); '
                      f'for (unsigned i = 0; i < {length}; i++) printf(" %02x", p[i]); printf("\\n"); }}')
+    lines += [f"    {stmt}" for stmt in after]
     lines.append("    return 0;")
     lines.append("}")
     return "\n".join(lines) + "\n"

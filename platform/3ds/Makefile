@@ -2,7 +2,8 @@
 #
 # Two apps share this file:
 #   make APP=cpu   -> spm3ds.3dsx      CPU demo: translated PowerPC, diagnostics, NDSP tone
-#   make APP=gfx   -> spm3ds_gfx.3dsx  Graphics demo: textured, rotating cube (citro3d)
+#   make APP=gfx   -> spm3ds_gfx.3dsx  Graphics demo: textured cube (citro3d), and a cube drawn
+#                                      by translated PowerPC code through GX (press A)
 # Default: APP=cpu.
 #
 # Structure follows devkitPro's examples (3ds-examples/templates/application/Makefile and
@@ -28,13 +29,13 @@ ifeq ($(APP),cpu)
   TARGET      := spm3ds
   SOURCES     := source/cpu source/generated
   LIBS        := -lctru -lm
-  RUNTIME_SRC := $(RUNTIME)/hle.c $(RUNTIME)/os.c $(RUNTIME)/mem.c
+  RUNTIME_SRC := $(RUNTIME)/hle.c $(RUNTIME)/os.c $(RUNTIME)/mem.c $(RUNTIME)/hw.c
   SHADER_DIRS :=
 else ifeq ($(APP),gfx)
   TARGET      := spm3ds_gfx
   SOURCES     := source/gfx
   LIBS        := -lcitro3d -lctru -lm
-  RUNTIME_SRC :=
+  RUNTIME_SRC := $(RUNTIME)/hw.c $(RUNTIME)/gx_cp.c
   SHADER_DIRS := source/gfx
 else
   $(error "APP must be cpu or gfx")

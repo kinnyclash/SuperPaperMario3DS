@@ -1,0 +1,16 @@
+; Pass-through vertex shader for triangles produced by the GX command processor
+; (runtime/gx_cp.c). Positions arrive already in clip space (with the 3DS screen tilt applied
+; on the CPU), so the shader only copies position and colour.
+; Inputs: v0 = clip-space position (xyzw), v1 = colour (rgba, 0..1)
+
+.out outpos position
+.out outclr color
+
+.alias inpos v0
+.alias inclr v1
+
+.proc main
+  mov outpos, inpos
+  mov outclr, inclr
+  end
+.end
