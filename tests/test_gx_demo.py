@@ -33,6 +33,15 @@ DRIVER = r"""
 #include "hw.h"
 #include "gx_cp.h"
 void spm3ds_gx_demo_frame(ppc_ctx *c, float cy, float sy, float cx, float sx);
+extern const uint32_t spm3ds_gx_demo_texture_addr;
+extern const uint8_t spm3ds_gx_demo_texture[2048];
+static uint8_t texmem[4096];
+static int rd(void *user, uint32_t phys, uint8_t *dst, uint32_t n) {
+    uint8_t *p = ppc_try((ppc_ctx *)user, phys | 0x80000000u, n);
+    if (!p) return 0;
+    memcpy(dst, p, n);
+    return 1;
+}
 static float f_of(const char *hex) {
     uint32_t w = (uint32_t)strtoul(hex, NULL, 16);
     float f;
@@ -46,19 +55,30 @@ int main(int argc, char **argv) {
     size_t used, i;
     (void)argc;
     memset(&c, 0, sizeof c);
+    memcpy(texmem, spm3ds_gx_demo_texture, sizeof spm3ds_gx_demo_texture);
+    c.regions[0].base = spm3ds_gx_demo_texture_addr;
+    c.regions[0].size = sizeof texmem;
+    c.regions[0].data = texmem;
+    c.nregions = 1;
     spm3ds_hw_init(&hw);
     spm3ds_hw_attach(&c, &hw);
     spm3ds_gx_demo_frame(&c, f_of(argv[1]), f_of(argv[2]), f_of(argv[3]), f_of(argv[4]));
     printf("fifo");
     for (i = 0; i < hw.fifo_size; i++) printf(" %02x", hw.fifo[i]);
     printf("\n");
-    gx_cp_init(&cp, NULL, NULL);
+    gx_cp_init(&cp, rd, &c);
     used = gx_cp_run(&cp, hw.fifo, hw.fifo_size);
     printf("used %lu error %d unsupported %u\n", (unsigned long)used, cp.error, cp.unsupported);
     for (i = 0; i < cp.out_count; i++) {
         gx_vertex_out *v = &cp.out[i];
-        printf("v %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g\n",
-               v->x, v->y, v->z, v->w, v->r, v->g, v->b, v->a);
+        printf("v %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g\n",
+               v->x, v->y, v->z, v->w, v->r, v->g, v->b, v->a, v->u, v->v);
+    }
+    for (i = 0; i < cp.batch_count; i++) {
+        gx_batch *b = &cp.batches[i];
+        printf("b %u %u %d %d %08x %u %u %u %u %u\n", (unsigned)b->first, (unsigned)b->count,
+               b->textured, b->modulate, (unsigned)b->tex_addr, b->tex_fmt, b->tex_w, b->tex_h,
+               b->wrap_s, b->wrap_t);
     }
     return 0;
 }
@@ -75,8 +95,20 @@ def f32_hex(x):
     return "%08x" % struct.unpack(">I", struct.pack(">f", x))[0]
 
 
-def interpret_frame(cy, sy, cx, sx):
+def demo_memory():
     memory = MemoryMap()
+    memory.add_region("TEX", make_gx_demo.TEXTURE_ADDR, 4096)
+    memory.write(make_gx_demo.TEXTURE_ADDR, make_gx_demo.texture_bytes())
+    return memory
+
+
+def processor(memory=None):
+    memory = memory or demo_memory()
+    return CommandProcessor(400, 240, read_memory=lambda a, n: memory.read(a | 0x80000000, n))
+
+
+def interpret_frame(cy, sy, cx, sx):
+    memory = demo_memory()
     hw = Hardware()
     memory.mmio = hw
     m = Machine(program_image(make_gx_demo.program(), make_gx_demo.CODE_BASE), memory)
@@ -95,9 +127,15 @@ class GeneratedSource(unittest.TestCase):
 class InterpreterPath(unittest.TestCase):
     def test_draws_twelve_visible_triangles(self):
         fifo = interpret_frame(1.0, 0.0, 1.0, 0.0)
-        cp = CommandProcessor(400, 240).run(fifo)
+        cp = processor().run(fifo)
         self.assertEqual(len(cp.triangles), 12)
         self.assertEqual(dict(cp.unsupported), {})
+        # Texture map 0 decodes from guest memory: texel (0, 0) is a gradient square
+        # (r5 = 8, g6 = 20, b5 = 12), texel (8, 0) is white.
+        tex = cp.texture_for_map(0)
+        self.assertEqual((tex.w, tex.h), (32, 32))
+        self.assertEqual(tex.rows[0][0], ((8 << 3) | 2, (20 << 2) | 1, (12 << 3) | 3, 255))
+        self.assertEqual(tex.rows[0][8], (255, 255, 255, 255))
         self.assertEqual(cp.cull, "none")
         for tri in cp.triangles:
             for v in tri:
@@ -136,8 +174,14 @@ class NativePathMatches(unittest.TestCase):
                 head = out[1].split()
                 self.assertEqual((int(head[1]), int(head[3]), int(head[5])),
                                  (len(c_fifo), 0, 0))
-                verts = [[float(x) for x in line.split()[1:]] for line in out[2:]]
-                tris = CommandProcessor(400, 240).run(py_fifo).triangles
+                verts = [[float(x) for x in line.split()[1:]] for line in out[2:]
+                         if line[0] == "v"]
+                batches = [line.split()[1:] for line in out[2:] if line[0] == "b"]
+                # One batch: textured, modulated, texture at physical 0x400000, RGB565 32x32,
+                # repeat in s and t.
+                self.assertEqual(batches, [["0", "36", "1", "1", "00400000", "4", "32", "32",
+                                            "1", "1"]])
+                tris = processor().run(py_fifo).triangles
                 self.assertEqual(len(verts), 3 * len(tris))
                 for t, tri in enumerate(tris):
                     for k, pv in enumerate(tri):
@@ -145,8 +189,9 @@ class NativePathMatches(unittest.TestCase):
                         self.assertAlmostEqual(x / w, pv["ndc_xy"][0], places=5)
                         self.assertAlmostEqual(y / w, pv["ndc_xy"][1], places=5)
                         self.assertAlmostEqual(1.0 / w, pv["invw"], places=5)
-                        self.assertEqual(tuple(round(c * 255) for c in verts[3 * t + k][4:]),
+                        self.assertEqual(tuple(round(c * 255) for c in verts[3 * t + k][4:8]),
                                          tuple(round(c * 255) for c in pv["color"]))
+                        self.assertEqual(tuple(verts[3 * t + k][8:]), pv["uv"])
 
 
 if __name__ == "__main__":

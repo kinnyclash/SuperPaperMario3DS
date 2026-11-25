@@ -9,8 +9,12 @@
  * 8/16-bit indexed vertex attributes, position matrices by current or per-vertex index, the
  * XF projection, quads/triangles/strips/fans, and cull mode. Output coordinates are GX clip
  * space (z from -w at the near plane to 0 at the far plane, the same range citro3d uses).
- * Not handled: lighting, texgen, TEV (colour is the vertex colour), lines, points, and the
- * GX viewport (the renderer maps the whole frame to the screen).
+ * Materials: triangles are grouped into batches. A batch is untextured (vertex colour), or
+ * uses one texture map either alone or multiplied by the vertex colour, decided from TEV
+ * stage 0 (texture order and colour inputs); other TEV setups are approximated by the
+ * multiplied form and counted in `unsupported`.
+ * Not handled: lighting, texgen, multi-stage TEV, lines, points, and the GX viewport (the
+ * renderer maps the whole frame to the screen).
  * MIT License. */
 #ifndef SPM3DS_GX_CP_H
 #define SPM3DS_GX_CP_H
@@ -23,6 +27,15 @@ typedef struct {
     float r, g, b, a;     /* 0..1 */
     float u, v;           /* texture coordinate 0 */
 } gx_vertex_out;
+
+typedef struct {
+    uint32_t first, count;     /* vertex range in gx_cp.out */
+    int textured;              /* 0: vertex colour only */
+    int modulate;              /* textured: 1 = texture x vertex colour, 0 = texture only */
+    uint32_t tex_addr;         /* physical address of the texture data */
+    unsigned tex_fmt, tex_w, tex_h;
+    unsigned wrap_s, wrap_t;   /* GX_CLAMP 0, GX_REPEAT 1, GX_MIRROR 2 */
+} gx_batch;
 
 /* Reads n bytes of guest memory at a physical address into dst; returns 0 on failure. */
 typedef int (*gx_read_fn)(void *user, uint32_t phys, uint8_t *dst, uint32_t n);
@@ -40,6 +53,9 @@ typedef struct gx_cp {
     gx_vertex_out *out;        /* 3 vertices per triangle */
     uint32_t out_count;        /* vertices */
     uint32_t out_cap;
+    gx_batch *batches;
+    uint32_t batch_count;
+    uint32_t batch_cap;
     uint32_t commands;
     uint32_t unsupported;      /* commands or attributes that were skipped */
     int error;                 /* nonzero after an unknown command; see message */

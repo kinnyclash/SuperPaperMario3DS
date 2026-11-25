@@ -16,7 +16,18 @@
 typedef struct {
     float pos[4];   /* clip space, tilted for the 3DS top screen */
     float clr[4];
+    float tc[2];    /* GX texture coordinate, scaled for power-of-two padding */
 } gx_scene_vertex;
+
+#define GX_SCENE_TEXTURES 32
+
+typedef struct {
+    int used;
+    uint32_t addr, signature;
+    unsigned fmt, w, h, wrap_s, wrap_t;
+    float scale_u, scale_v;   /* source size / padded size */
+    C3D_Tex tex;
+} gx_scene_texture;
 
 typedef struct {
     shaderProgram_s program;
@@ -27,6 +38,8 @@ typedef struct {
     ppc_ctx *ctx;
     spm3ds_hw *hw;
     gx_cp *cp;
+    gx_scene_texture textures[GX_SCENE_TEXTURES];
+    u32 texture_uploads; /* textures decoded and uploaded so far */
     u32 triangles;     /* drawn in the last frame */
     u32 fifo_bytes;    /* captured in the last frame */
     int error;         /* command processor error flag from the last frame */

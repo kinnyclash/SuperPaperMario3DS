@@ -36,7 +36,7 @@ else ifeq ($(APP),gfx)
   TARGET      := spm3ds_gfx
   SOURCES     := source/gfx
   LIBS        := -lcitro3d -lctru -lm
-  RUNTIME_SRC := $(RUNTIME)/hw.c $(RUNTIME)/gx_cp.c
+  RUNTIME_SRC := $(RUNTIME)/hw.c $(RUNTIME)/gx_cp.c $(RUNTIME)/gx_tex.c
   SHADER_DIRS := source/gfx
 else
   $(error "APP must be cpu or gfx")

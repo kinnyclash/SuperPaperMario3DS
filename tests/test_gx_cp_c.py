@@ -70,6 +70,12 @@ int main(int argc, char **argv) {
         printf("v %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g\n",
                v->x, v->y, v->z, v->w, v->r, v->g, v->b, v->a, v->u, v->v);
     }
+    for (i = 0; i < cp.batch_count; i++) {
+        gx_batch *b = &cp.batches[i];
+        printf("b %u %u %d %d %08x %u %u %u %u %u\n", (unsigned)b->first, (unsigned)b->count,
+               b->textured, b->modulate, (unsigned)b->tex_addr, b->tex_fmt, b->tex_w, b->tex_h,
+               b->wrap_s, b->wrap_t);
+    }
     gx_cp_free(&cp);
     return 0;
 }
@@ -116,7 +122,8 @@ class CPortMatchesPython(unittest.TestCase):
             args += [hex(base), p]
         out = subprocess.run(args, check=True, capture_output=True, text=True).stdout.splitlines()
         head = out[0].split()
-        verts = [[float(x) for x in line.split()[1:]] for line in out[1:]]
+        verts = [[float(x) for x in line.split()[1:]] for line in out[1:] if line[0] == "v"]
+        self.batches = [line.split()[1:] for line in out[1:] if line[0] == "b"]
         return int(head[1]), int(head[3]), verts
 
     def compare(self, stream, mem=None):
@@ -203,6 +210,28 @@ class CPortMatchesPython(unittest.TestCase):
         s.SetVtxAttrFmt(0, g.GX_VA_POS, g.GX_POS_XYZ, g.GX_F32, 0)
         s.out += b"\x48" + struct.pack(">II", 0x300000, len(inner.data()))
         self.assertEqual(len(self.compare(s.data(), mem)), 1)
+
+    def test_material_batches(self):
+        from tests.test_gx_regs import texture_tev
+        def quad(s):
+            s.Begin(g.GX_QUADS, 0, 4)
+            for x, y, u, v in [(0, 0, 0, 1), (4, 0, 1, 1), (4, 4, 1, 0), (0, 4, 0, 0)]:
+                s.raw("3f", x, y, -0.5)
+                s.raw("4B", 255, 255, 255, 255)
+                s.raw("2f", u, v)
+        s = quad_stream(extra=lambda s: s.SetCullMode(g.GX_CULL_NONE))   # 1: no TEV
+        s.LoadTexObj(0, 0x00400000, 4, 4, 4, 1, 0)
+        texture_tev(s)                                                    # colour = TEXC
+        quad(s)                                                           # 2: texture only
+        quad(s)                                                           # merged into 2
+        s.SetTevColorIn(0, "ZERO", "TEXC", "RASC", "ZERO")               # modulate
+        quad(s)                                                           # 3
+        self.compare(s.data())
+        self.assertEqual(self.batches, [
+            ["0", "6", "0", "0", "00000000", "0", "0", "0", "0", "0"],
+            ["6", "12", "1", "0", "00400000", "4", "4", "4", "1", "0"],
+            ["18", "6", "1", "1", "00400000", "4", "4", "4", "1", "0"],
+        ])
 
     def test_truncated_command_is_left_for_the_next_call(self):
         stream = quad_stream().data()

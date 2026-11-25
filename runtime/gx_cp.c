@@ -38,12 +38,89 @@ void gx_cp_init(gx_cp *g, gx_read_fn read, void *user) {
 
 void gx_cp_free(gx_cp *g) {
     free(g->out);
+    free(g->batches);
     g->out = NULL;
+    g->batches = NULL;
     g->out_cap = g->out_count = 0;
+    g->batch_cap = g->batch_count = 0;
 }
 
 void gx_cp_clear_output(gx_cp *g) {
     g->out_count = 0;
+    g->batch_count = 0;
+}
+
+/* ---- materials ---- */
+
+static const uint8_t tex_image0_ids[8] = {0x88, 0x89, 0x8A, 0x8B, 0xA8, 0xA9, 0xAA, 0xAB};
+static const uint8_t tex_image3_ids[8] = {0x94, 0x95, 0x96, 0x97, 0xB4, 0xB5, 0xB6, 0xB7};
+static const uint8_t tex_mode0_ids[8] = {0x80, 0x81, 0x82, 0x83, 0xA0, 0xA1, 0xA2, 0xA3};
+
+static int supported_tex_format(unsigned fmt) {
+    return fmt <= 6u || fmt == 14u;
+}
+
+/* Material for the next draw, from TEV stage 0 (see gx_cp.h). */
+static void current_material(gx_cp *g, gx_batch *m) {
+    unsigned order, texmap, i, a, b, c, d;
+    uint32_t env;
+    int any_tev = 0;
+    memset(m, 0, sizeof *m);
+    for (i = 0xC0; i <= 0xDF; i++) any_tev |= g->bp_set[i];
+    if (!any_tev) return;
+    order = g->bp[0x28];
+    if (!bitsof(order, 6, 1)) return;               /* stage 0 has no texture */
+    texmap = bitsof(order, 0, 3);
+    if (!g->bp_set[tex_image0_ids[texmap]] || !g->bp_set[tex_image3_ids[texmap]]) return;
+    m->tex_w = bitsof(g->bp[tex_image0_ids[texmap]], 0, 10) + 1u;
+    m->tex_h = bitsof(g->bp[tex_image0_ids[texmap]], 10, 10) + 1u;
+    m->tex_fmt = bitsof(g->bp[tex_image0_ids[texmap]], 20, 4);
+    m->tex_addr = (g->bp[tex_image3_ids[texmap]] & 0xFFFFFFu) << 5;
+    m->wrap_s = bitsof(g->bp[tex_mode0_ids[texmap]], 0, 2);
+    m->wrap_t = bitsof(g->bp[tex_mode0_ids[texmap]], 2, 2);
+    if (!supported_tex_format(m->tex_fmt)) {
+        g->unsupported++;
+        return;
+    }
+    m->textured = 1;
+    env = g->bp[0xC0];
+    a = bitsof(env, 12, 4); b = bitsof(env, 8, 4); c = bitsof(env, 4, 4); d = bitsof(env, 0, 4);
+    if (d == 8u && a == 15u && b == 15u && c == 15u) {
+        m->modulate = 0;                            /* colour = TEXC */
+    } else {
+        m->modulate = 1;                            /* TEXC x RASC, or approximated as it */
+        if (!(d == 15u && a == 15u && ((b == 8u && c == 10u) || (b == 10u && c == 8u))))
+            g->unsupported++;
+    }
+}
+
+static int same_material(const gx_batch *x, const gx_batch *y) {
+    if (x->textured != y->textured) return 0;
+    if (!x->textured) return 1;
+    return x->modulate == y->modulate && x->tex_addr == y->tex_addr &&
+           x->tex_fmt == y->tex_fmt && x->tex_w == y->tex_w && x->tex_h == y->tex_h &&
+           x->wrap_s == y->wrap_s && x->wrap_t == y->wrap_t;
+}
+
+/* Makes the last batch match the current material, starting a new one if needed. */
+static gx_batch *begin_batch(gx_cp *g) {
+    gx_batch m;
+    current_material(g, &m);
+    if (g->batch_count) {
+        gx_batch *last = &g->batches[g->batch_count - 1];
+        if (same_material(last, &m) && last->first + last->count == g->out_count) return last;
+    }
+    if (g->batch_count == g->batch_cap) {
+        uint32_t cap = g->batch_cap ? g->batch_cap * 2u : 64u;
+        gx_batch *p = (gx_batch *)realloc(g->batches, cap * sizeof *p);
+        if (!p) return NULL;
+        g->batches = p;
+        g->batch_cap = cap;
+    }
+    m.first = g->out_count;
+    m.count = 0;
+    g->batches[g->batch_count] = m;
+    return &g->batches[g->batch_count++];
 }
 
 static void fail(gx_cp *g, const char *what, unsigned value) {
@@ -291,6 +368,7 @@ static size_t draw(gx_cp *g, const uint8_t *d, size_t n) {
     uint32_t count, k;
     size_t pos = 3;
     gx_vertex_out *v;
+    gx_batch *batch;
     if (n < 3) return 0;
     count = be16(d + 1);
     if (prim == 1) prim = 0;
@@ -309,6 +387,7 @@ static size_t draw(gx_cp *g, const uint8_t *d, size_t n) {
         pos += (size_t)used;
         transform(g, &in, &v[k]);
     }
+    batch = begin_batch(g);
     switch (prim) {
     case 0: for (k = 0; k + 3 < count; k += 4) {
                 push_triangle(g, &v[k], &v[k + 1], &v[k + 2]);
@@ -324,6 +403,7 @@ static size_t draw(gx_cp *g, const uint8_t *d, size_t n) {
     case 4: for (k = 1; k + 1 < count; k++) push_triangle(g, &v[0], &v[k], &v[k + 1]); break;
     default: g->unsupported++; break;   /* lines, line strips, points */
     }
+    if (batch) batch->count = g->out_count - batch->first;
     free(v);
     return pos;
 }
