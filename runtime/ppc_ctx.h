@@ -388,7 +388,7 @@ static inline uint64_t ppc_psq_load(ppc_ctx *c, uint32_t ea, unsigned idx, int w
         unsigned size = (kind == 4u || kind == 6u) ? 1u : 2u;
         int is_signed = kind >= 6u;
         if (kind < 4u || kind > 7u) {
-            fprintf(stderr, "psq_l: load type %u is reserved\n", kind);
+            fprintf(stderr, "psq_l: load type %u is reserved\n", (unsigned)kind);
             abort();
         }
         hi = ppc_s_b(ppc_dequant(size == 1u ? ppc_r8(c, ea) : ppc_r16(c, ea), size, is_signed, scale));
@@ -413,7 +413,7 @@ static inline void ppc_psq_store(ppc_ctx *c, uint32_t ea, uint64_t f, unsigned i
         return;
     }
     if (kind < 4u || kind > 7u) {
-        fprintf(stderr, "psq_st: store type %u is reserved\n", kind);
+        fprintf(stderr, "psq_st: store type %u is reserved\n", (unsigned)kind);
         abort();
     }
     {
