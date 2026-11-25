@@ -77,10 +77,48 @@ class SymbolError(ValueError):
     pass
 
 
+CODE_SECTIONS = (".init", ".text")
+
+
+def _parse_dtk_line(number, raw):
+    """One decomp-toolkit symbols.txt line:
+        NAME = SECTION:0xADDRESS; // type:function size:0x... scope:...
+    Returns (address, name, is_function)."""
+    body, _, comment = raw.partition("//")
+    name, _, rest = body.partition("=")
+    name = name.strip()
+    rest = rest.strip().rstrip(";").strip()
+    section, colon, addr = rest.rpartition(":")
+    if not name or not colon:
+        raise SymbolError(f"line {number}: expected 'NAME = SECTION:0xADDRESS;', got {raw!r}")
+    try:
+        address = int(addr, 16)
+    except ValueError:
+        raise SymbolError(f"line {number}: bad address {addr!r}") from None
+    fields = dict(f.split(":", 1) for f in comment.split() if ":" in f)
+    kind = fields.get("type")
+    is_function = kind == "function" or (kind is None and section.strip() in CODE_SECTIONS)
+    return address, name, is_function
+
+
 def parse_symbols(text):
-    """Return a list of (address, name) pairs. Raises SymbolError on malformed lines."""
+    """Return a list of (address, name) pairs for functions. Raises SymbolError on malformed
+    lines.
+
+    Two formats are accepted, line by line:
+      * `ADDRESS NAME` (hex address), with `#` comments;
+      * decomp-toolkit's symbols.txt, `NAME = .text:0xADDRESS; // type:function ...`, as
+        published by community decompilation projects. Only function symbols are returned
+        (type:function, or a symbol in .init/.text without a type), because data addresses
+        must not be analysed as code.
+    """
     pairs = []
     for number, raw in enumerate(text.splitlines(), start=1):
+        if "=" in raw.split("//", 1)[0]:
+            address, name, is_function = _parse_dtk_line(number, raw)
+            if is_function:
+                pairs.append((address, name))
+            continue
         line = raw.split("#", 1)[0].strip()
         if not line:
             continue

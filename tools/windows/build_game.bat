@@ -2,6 +2,8 @@
 rem spm3ds: build the 3DS game app from YOUR OWN main.dol.
 rem
 rem Usage:  tools\windows\build_game.bat "C:\path\to\main.dol" [symbols.txt] [jumptables.txt]
+rem symbols.txt may be "ADDRESS NAME" lines or a decomp-toolkit symbols.txt (for example from a
+rem community decompilation project for your game version); only function symbols are used.
 rem
 rem Steps: 1 find Python, 2 analyse main.dol (report only), 3 translate it to C in
 rem platform\3ds\source\game_generated (stays on your computer, never upload it),
