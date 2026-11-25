@@ -386,10 +386,13 @@ def _dispatch_lines(entries):
     for f in entries:
         out.append(f"    {{ 0x{f:08X}u, {fn_name(f)} }},")
     out += ["};", "",
+            "/* Indirect calls: binary search in the table, which is sorted by address. */",
             "void ppc_dispatch(ppc_ctx *c, uint32_t target) {",
-            "    unsigned i;",
-            "    for (i = 0; i < sizeof ppc_fn_table / sizeof ppc_fn_table[0]; i++) {",
-            "        if (ppc_fn_table[i].addr == target) { ppc_fn_table[i].fn(c); return; }",
+            "    unsigned lo = 0, hi = sizeof ppc_fn_table / sizeof ppc_fn_table[0];",
+            "    while (lo < hi) {",
+            "        unsigned mid = lo + (hi - lo) / 2u;",
+            "        if (ppc_fn_table[mid].addr == target) { ppc_fn_table[mid].fn(c); return; }",
+            "        if (ppc_fn_table[mid].addr < target) lo = mid + 1u; else hi = mid;",
             "    }",
             '    fprintf(stderr, "indirect branch to unknown function %08x\\n", (unsigned)target);',
             '    ppc_crash_report(c, "indirect branch to an address that is not a function");',
