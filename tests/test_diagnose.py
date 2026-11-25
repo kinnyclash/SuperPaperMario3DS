@@ -40,11 +40,11 @@ class DiagnoseTests(unittest.TestCase):
 
     def test_unsupported_words_are_reported_by_address_and_opcode(self):
         with tempfile.TemporaryDirectory() as workdir:
-            # opcode 4 with xo 0 is not modelled, so it is listed as unsupported.
-            words = [addi(3, 0, 1), (4 << 26) | 0x1234, BLR]
+            # primary opcode 1 is reserved, so it is listed as unsupported.
+            words = [addi(3, 0, 1), (1 << 26) | 0x1234, BLR]
             path, _ = self.write_dol(workdir, words)
             report = build_report(path)
-        self.assertIn("primary opcode 4: 1 word(s): `0x80003004`", report)
+        self.assertIn("primary opcode 1: 1 word(s): `0x80003004`", report)
 
     def test_memory_section_mentions_new_3ds_query(self):
         with tempfile.TemporaryDirectory() as workdir:
