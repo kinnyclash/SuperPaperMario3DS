@@ -26,6 +26,7 @@ from .memory import MemoryMap
 from .ppc import (CARRY_OPS, D_MEM_LOAD, D_MEM_STORE, INT_BINARY, INT_UNARY, LOGICAL_OPS, M32,
                   PS_MERGE, PS_OPS, SPR_CTR, SPR_GQR0, SPR_LR, UNARY_FROM_RA, UPDATE_FORMS,
                   X_MEM_LOAD, X_MEM_STORE, mask32)
+from .ppc_ext import EXT_OPS, ext_lines
 
 # Paired-single arithmetic as C expressions on doubles. {a}, {b}, {c} are the lane operands.
 PS_ARITH_C = {
@@ -89,7 +90,7 @@ def _cond(insn):
 
 def _rc(insn, dst):
     if insn.rc:
-        return [f"c->cr = ppc_cmp_s(c->cr, 0u, (int32_t){_r(dst)}, 0);"]
+        return [f"c->cr = ppc_cmp_s(c->cr, 0u, (int32_t){_r(dst)}, 0, c->xer);"]
     return []
 
 
@@ -150,6 +151,8 @@ def _data_lines(insn):
     """C statements for a non-branch instruction."""
     op = insn.op
     rd, ra, rb = insn.rd, insn.ra, insn.rb
+    if op in EXT_OPS:
+        return ext_lines(insn)
     if op in PS_OPS or op in ("psq_l", "psq_lu", "psq_st", "psq_stu"):
         return _paired_lines(insn)
     if op in INT_BINARY:
@@ -192,13 +195,13 @@ def _data_lines(insn):
             lines = [f"{_r(ra)} = {rot} & {_lit(m)};"]
         return lines + _rc(insn, ra)
     if op == "cmp":
-        return [f"c->cr = ppc_cmp_s(c->cr, {insn.crf}u, (int32_t){_r(ra)}, (int32_t){_r(rb)});"]
+        return [f"c->cr = ppc_cmp_s(c->cr, {insn.crf}u, (int32_t){_r(ra)}, (int32_t){_r(rb)}, c->xer);"]
     if op == "cmpl":
-        return [f"c->cr = ppc_cmp_u(c->cr, {insn.crf}u, {_r(ra)}, {_r(rb)});"]
+        return [f"c->cr = ppc_cmp_u(c->cr, {insn.crf}u, {_r(ra)}, {_r(rb)}, c->xer);"]
     if op == "cmpi":
-        return [f"c->cr = ppc_cmp_s(c->cr, {insn.crf}u, (int32_t){_r(ra)}, (int32_t)({insn.imm}));"]
+        return [f"c->cr = ppc_cmp_s(c->cr, {insn.crf}u, (int32_t){_r(ra)}, (int32_t)({insn.imm}), c->xer);"]
     if op == "cmpli":
-        return [f"c->cr = ppc_cmp_u(c->cr, {insn.crf}u, {_r(ra)}, {_lit(insn.imm)});"]
+        return [f"c->cr = ppc_cmp_u(c->cr, {insn.crf}u, {_r(ra)}, {_lit(insn.imm)}, c->xer);"]
     if op == "mfcr":
         return [f"{_r(rd)} = c->cr;"]
     if op == "mfspr":
@@ -305,6 +308,28 @@ def _branch_lines(insn, fn, entries, external, external_names):
     raise NotImplementedError(op)
 
 
+BLOCK_ENDERS = ("b", "bl", "bc", "bclr", "bcctr")
+
+
+def _basic_blocks(addrs, body, labels):
+    """Return {block start address: instruction count} for one function.
+
+    A block starts at the first instruction, at every branch target label, after any branch
+    or call, and after a gap in the addresses. Control can only enter a block at its start
+    and only leave it at its end, so adding the count once at the start (PPC_BLOCK) gives the
+    same instruction count as counting every instruction (PPC_DIAG)."""
+    sizes = {}
+    start = None
+    prev = None
+    for addr in addrs:
+        if start is None or addr in labels or addr != prev + 4 or body[prev].op in BLOCK_ENDERS:
+            start = addr
+            sizes[start] = 0
+        sizes[start] += 1
+        prev = addr
+    return sizes
+
+
 def _table_dispatch_lines(targets):
     """A bctr through a declared jump table: jump to a listed label. Any other value is tried
     as a function (a tail call), and the dispatcher aborts if it is not a known function."""
@@ -314,8 +339,76 @@ def _table_dispatch_lines(targets):
             "return;"]
 
 
+def _prepare(image, entry, external_names, strict, seeds, jump_targets):
+    names = dict(external_names or {})
+    jump_targets = {int(k): tuple(v) for k, v in (jump_targets or {}).items()}
+    result = analyze(image, entry, frozenset(names), seeds, jump_targets)
+    if strict:
+        result.raise_if_fatal()
+    hle_names = {addr: f"hle_{name}" for addr, name in names.items()}
+    return result, jump_targets, hle_names
+
+
+def _function_lines(f, result, jump_targets, hle_names):
+    """C lines for one translated function (definition only)."""
+    body = result.bodies[f]
+    jump_labels = set()
+    branch_lines = {}
+    for addr, insn in body.items():
+        if insn.op == "bcctr" and addr in jump_targets:
+            branch_lines[addr] = _table_dispatch_lines(jump_targets[addr])
+            jump_labels.update(jump_targets[addr])
+            continue
+        if insn.op in ("b", "bl", "bc", "bclr", "bcctr"):
+            lines, label = _branch_lines(insn, f, result.entries, result.external, hle_names)
+            branch_lines[addr] = lines
+            if label is not None:
+                jump_labels.add(label)
+    out = ["", f"void {fn_name(f)}(ppc_ctx *c) {{"]
+    block_sizes = _basic_blocks(sorted(body), body, jump_labels)
+    for addr in sorted(body):
+        insn = body[addr]
+        if addr in jump_labels:
+            out.append(f"L_{addr:08X}:")
+        lines = branch_lines.get(addr) or _data_lines(insn)
+        if addr in block_sizes:
+            out.append(f"    PPC_BLOCK(0x{addr:08X}u, {block_sizes[addr]}u);")
+        out.append(f"    PPC_DIAG(0x{addr:08X}u);")
+        for line in lines:
+            out.append("    " + line)
+    out.append("}")
+    return out
+
+
+def _dispatch_lines(entries):
+    out = ["", "typedef struct { uint32_t addr; ppc_fn fn; } ppc_fn_entry;",
+           "static const ppc_fn_entry ppc_fn_table[] = {"]
+    for f in entries:
+        out.append(f"    {{ 0x{f:08X}u, {fn_name(f)} }},")
+    out += ["};", "",
+            "void ppc_dispatch(ppc_ctx *c, uint32_t target) {",
+            "    unsigned i;",
+            "    for (i = 0; i < sizeof ppc_fn_table / sizeof ppc_fn_table[0]; i++) {",
+            "        if (ppc_fn_table[i].addr == target) { ppc_fn_table[i].fn(c); return; }",
+            "    }",
+            '    fprintf(stderr, "indirect branch to unknown function %08x\\n", (unsigned)target);',
+            '    ppc_crash_report(c, "indirect branch to an address that is not a function");',
+            "    abort();",
+            "}"]
+    return out
+
+
+def _declarations(entries):
+    out = [f"#include {h}" for h in RUNTIME_HEADERS]
+    out.append("")
+    out.append("void ppc_dispatch(ppc_ctx *c, uint32_t target);")
+    for f in entries:
+        out.append(f"void {fn_name(f)}(ppc_ctx *c);")
+    return out
+
+
 def generate_c(image, entry, external_names=None, strict=True, seeds=(), jump_targets=None):
-    """Return the C source for every function reachable from `entry`.
+    """Return the C source for every function reachable from `entry`, as one file.
 
     `external_names` maps HLE addresses to names implemented in runtime/hle.c.
     `seeds` are extra function addresses, such as those in a symbol file. Indirect calls
@@ -323,74 +416,76 @@ def generate_c(image, entry, external_names=None, strict=True, seeds=(), jump_ta
     `jump_targets` maps a bctr address to the table entries it can jump to (see jumptables.py).
     With strict=True any fatal problem raises CompileError before code is produced.
     """
-    names = dict(external_names or {})
-    jump_targets = {int(k): tuple(v) for k, v in (jump_targets or {}).items()}
-    result = analyze(image, entry, frozenset(names), seeds, jump_targets)
-    if strict:
-        result.raise_if_fatal()
+    result, jump_targets, hle_names = _prepare(image, entry, external_names, strict, seeds,
+                                               jump_targets)
     entries = sorted(result.entries)
-    external = result.external
-    external_names = {addr: f"hle_{name}" for addr, name in names.items()}
-
     out = ["/* Generated by spm3ds recompiler. Do not edit by hand. */"]
-    out += [f"#include {h}" for h in RUNTIME_HEADERS]
-    out.append("")
-    out.append("void ppc_dispatch(ppc_ctx *c, uint32_t target);")
+    out += _declarations(entries)
     for f in entries:
-        out.append(f"void {fn_name(f)}(ppc_ctx *c);")
-
-    for f in entries:
-        body = result.bodies[f]
-        jump_labels = set()
-        branch_lines = {}
-        for addr, insn in body.items():
-            if insn.op == "bcctr" and addr in jump_targets:
-                branch_lines[addr] = _table_dispatch_lines(jump_targets[addr])
-                jump_labels.update(jump_targets[addr])
-                continue
-            if insn.op in ("b", "bl", "bc", "bclr", "bcctr"):
-                lines, label = _branch_lines(insn, f, result.entries, external, external_names)
-                branch_lines[addr] = lines
-                if label is not None:
-                    jump_labels.add(label)
-        out.append("")
-        out.append(f"void {fn_name(f)}(ppc_ctx *c) {{")
-        for addr in sorted(body):
-            insn = body[addr]
-            if addr in jump_labels:
-                out.append(f"L_{addr:08X}:")
-            lines = branch_lines.get(addr) or _data_lines(insn)
-            out.append(f"    PPC_DIAG(0x{addr:08X}u);")
-            for line in lines:
-                out.append("    " + line)
-        out.append("}")
-
-    out.append("")
-    out.append("typedef struct { uint32_t addr; ppc_fn fn; } ppc_fn_entry;")
-    out.append("static const ppc_fn_entry ppc_fn_table[] = {")
-    for f in entries:
-        out.append(f"    {{ 0x{f:08X}u, {fn_name(f)} }},")
-    out.append("};")
-    out.append("")
-    out.append("void ppc_dispatch(ppc_ctx *c, uint32_t target) {")
-    out.append("    unsigned i;")
-    out.append("    for (i = 0; i < sizeof ppc_fn_table / sizeof ppc_fn_table[0]; i++) {")
-    out.append("        if (ppc_fn_table[i].addr == target) { ppc_fn_table[i].fn(c); return; }")
-    out.append("    }")
-    out.append('    fprintf(stderr, "indirect branch to unknown function %08x\\n", (unsigned)target);')
-    out.append('    ppc_crash_report(c, "indirect branch to an address that is not a function");')
-    out.append("    abort();")
-    out.append("}")
+        out += _function_lines(f, result, jump_targets, hle_names)
+    out += _dispatch_lines(entries)
     return "\n".join(out) + "\n"
 
 
-def harness_source(entry, memmap, init=(), dumps=()):
+def generate_units(image, entry, external_names=None, strict=True, seeds=(), jump_targets=None,
+                   functions_per_unit=500, prefix="ppc"):
+    """Return {file name: source} for a large program split into several C files.
+
+    `<prefix>_decls.h` declares every translated function; `<prefix>_NNNN.c` each define up to
+    `functions_per_unit` functions; `<prefix>_dispatch.c` holds the indirect-call table. A real
+    game has hundreds of thousands of instructions, which one C file cannot hold for a
+    compiler, so the 3DS game build compiles these files separately.
+    """
+    if functions_per_unit < 1:
+        raise ValueError("functions_per_unit must be at least 1")
+    result, jump_targets, hle_names = _prepare(image, entry, external_names, strict, seeds,
+                                               jump_targets)
+    entries = sorted(result.entries)
+    header = f"{prefix}_decls.h"
+    guard = f"SPM3DS_{prefix.upper()}_DECLS_H"
+    files = {header: "\n".join(["/* Generated by spm3ds recompiler. Do not edit by hand. */",
+                                f"#ifndef {guard}", f"#define {guard}"]
+                               + _declarations(entries) + [f"#endif /* {guard} */"]) + "\n"}
+    for k in range(0, len(entries), functions_per_unit):
+        lines = ["/* Generated by spm3ds recompiler. Do not edit by hand. */",
+                 f'#include "{header}"']
+        for f in entries[k:k + functions_per_unit]:
+            lines += _function_lines(f, result, jump_targets, hle_names)
+        files[f"{prefix}_{k // functions_per_unit:04d}.c"] = "\n".join(lines) + "\n"
+    files[f"{prefix}_dispatch.c"] = "\n".join(
+        ["/* Generated by spm3ds recompiler. Do not edit by hand. */", f'#include "{header}"']
+        + _dispatch_lines(entries)) + "\n"
+    return files
+
+
+def game_info_source(dol_bytes, entry, prefix="game"):
+    """C file the 3DS game app links with the generated code: the entry point and a
+    fingerprint of the DOL, so the app can refuse a main.dol that does not match."""
+    import zlib
+    return "\n".join([
+        "/* Generated by spm3ds recompiler. Do not edit by hand. */",
+        f'#include "{prefix}_decls.h"',
+        "",
+        f"const uint32_t spm3ds_game_dol_size = {len(dol_bytes)}u;",
+        f"const uint32_t spm3ds_game_dol_crc32 = 0x{zlib.crc32(dol_bytes) & 0xFFFFFFFF:08X}u;",
+        f"const uint32_t spm3ds_game_entry_address = 0x{entry:08X}u;",
+        "",
+        "void spm3ds_game_entry(ppc_ctx *c);",
+        f"void spm3ds_game_entry(ppc_ctx *c) {{ {fn_name(entry)}(c); }}",
+        ""])
+
+
+def harness_source(entry, memmap, init=(), dumps=(), includes=(), before=(), after=()):
     """A C main() that runs `entry` on a fresh context and prints the final state.
 
     `memmap` supplies the regions. `init` is a list of (address, bytes) written before the
     run. `dumps` is a list of (address, length) printed after the run as "m ADDR BYTES".
+    `includes` are extra headers; `before` and `after` are C statements run before the guest
+    entry and after the state is printed (the context is `c`).
     """
-    lines = ["#include <stdio.h>", "#include <string.h>", '#include "ppc_ctx.h"', ""]
+    lines = ["#include <stdio.h>", "#include <string.h>", '#include "ppc_ctx.h"']
+    lines += [f'#include "{h}"' for h in includes]
+    lines.append("")
     for i, region in enumerate(memmap.regions):
         lines.append(f"static uint8_t region_{i}[{region.size}];")
     lines.append("int main(void) {")
@@ -405,15 +500,18 @@ def harness_source(entry, memmap, init=(), dumps=()):
         values = ", ".join(f"0x{b:02X}" for b in data)
         lines.append(f"    {{ static const uint8_t init_{k}[] = {{ {values} }}; "
                      f"memcpy(ppc_ptr(&c, 0x{address:08X}u, {len(data)}), init_{k}, {len(data)}); }}")
+    lines += [f"    {stmt}" for stmt in before]
     lines.append(f"    {fn_name(entry)}(&c);")
     lines.append('    for (int i = 0; i < 32; i++) printf("r%d %08x\\n", i, (unsigned)c.r[i]);')
     lines.append('    for (int i = 0; i < 32; i++) printf("f%d %016llx\\n", i, (unsigned long long)c.f[i]);')
     lines.append('    printf("lr %08x\\nctr %08x\\ncr %08x\\n", (unsigned)c.lr, (unsigned)c.ctr, (unsigned)c.cr);')
-    lines.append('    printf("xer %08x\\n", (unsigned)(c.xer & 0x20000000u));')
+    lines.append('    printf("xer %08x\\n", (unsigned)(c.xer & 0xE0000000u));')
+    lines.append('    printf("icount %llu\\n", (unsigned long long)c.icount);')
     for address, length in dumps:
         lines.append(f"    {{ const uint8_t *p = ppc_ptr(&c, 0x{address:08X}u, {length}); "
                      f'printf("m %08x", 0x{address:08X}u); '
                      f'for (unsigned i = 0; i < {length}; i++) printf(" %02x", p[i]); printf("\\n"); }}')
+    lines += [f"    {stmt}" for stmt in after]
     lines.append("    return 0;")
     lines.append("}")
     return "\n".join(lines) + "\n"
@@ -531,6 +629,12 @@ def main(argv=None):
     p_c.add_argument("--jump-tables", help="declarations: 'JUMPTABLE <bctr> <table> <count>'")
     p_c.add_argument("--auto-jump-tables", action="store_true",
                      help="also detect switch tables from the code (reported on stderr)")
+    p_c.add_argument("--split", type=int, metavar="N",
+                     help="write a directory of C files with N functions each (for real games)")
+    p_c.add_argument("--prefix", default="game", help="file and header prefix for --split")
+    p_c.add_argument("--game-info", action="store_true",
+                     help="with --split: also write <prefix>_info.c for the 3DS game app "
+                          "(entry point, DOL size and CRC-32)")
     args = parser.parse_args(argv)
 
     try:
@@ -544,6 +648,24 @@ def main(argv=None):
         image = dol.text_words()
         result = analyze(image, dol.entry, frozenset(names), seeds, jump_targets)
         _print_report(dol, names, unimplemented, result, sweep(image))
+        return 0
+    if args.split:
+        try:
+            files = generate_units(dol.text_words(), dol.entry, names, seeds=seeds,
+                                   jump_targets=jump_targets, functions_per_unit=args.split,
+                                   prefix=args.prefix)
+            if args.game_info:
+                with open(args.dol, "rb") as f:
+                    files[f"{args.prefix}_info.c"] = game_info_source(f.read(), dol.entry,
+                                                                     args.prefix)
+        except Exception as exc:  # CompileError lists every blocking problem
+            print(exc, file=sys.stderr)
+            return 1
+        os.makedirs(args.out, exist_ok=True)
+        for name, text in files.items():
+            with open(os.path.join(args.out, name), "w", encoding="utf-8") as f:
+                f.write(text)
+        print(f"wrote {len(files)} files to {args.out}")
         return 0
     try:
         source = generate_c(dol.text_words(), dol.entry, names, seeds=seeds,
