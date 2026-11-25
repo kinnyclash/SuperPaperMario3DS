@@ -28,6 +28,9 @@ Paths are relative to the cloned repository root.
 | `GPU_CULL_NONE` (0), `GPU_CULL_BACK_CCW` (2) | `source/gfx/gx_citro3d.c` | `libctru/libctru/include/3ds/gpu/enums.h` |
 | `GPU_RGBA8`, `GPU_TEXFACE_2D`, `GPU_NEAREST`, `GPU_LINEAR` | `source/gfx/gx_citro3d.c` | `libctru/libctru/include/3ds/gpu/enums.h` |
 | `GPU_GREATER` (6), `GPU_WRITE_ALL` (0x1F), `GPU_TRIANGLES` | `source/gfx/gx_citro3d.c` | `libctru/libctru/include/3ds/gpu/enums.h` |
+| `GSPGPU_FlushDataCache` | `source/gfx/gx_scene.c` | `libctru/libctru/include/3ds/services/gspgpu.h` |
+| `KEY_A`, `KEY_START` | `source/gfx/main.c` | `libctru/libctru/include/3ds/services/hid.h` |
+| `GPU_REPLACE`, `GPU_PRIMARY_COLOR` | `source/gfx/gx_scene.c` | `libctru/libctru/include/3ds/gpu/enums.h` |
 | `ndsp*` (audio) | not yet used | **not written yet** |
 
 Header paths in this document were confirmed by grep in the cloned repositories. Only
@@ -63,8 +66,6 @@ Note: `C3D_FVUnifMtx4x4` is `static inline` in the header, so it does not need l
 
 ## Not verified
 
-- **3ds-dev package group.** The CI workflow installs `3ds-dev` with `dkp-pacman`. The cloned
-  examples show only individual `3ds-<name>` packages, so the group name is unconfirmed.
 - **RGBA8 byte order.** The texture writes R, G, B, A bytes. Whether the PICA200 expects this
   order is not confirmed. A swapped red and blue channel would show this on the console.
 - **Tile arrangement.** See `source/gfx/tiling.h`. Checked only against the description in
@@ -76,7 +77,15 @@ Note: `C3D_FVUnifMtx4x4` is `static inline` in the header, so it does not need l
 - **GX CP/BP register layouts** (VCD, VAT, BP genmode, TEV colour env). Recorded in
   `docs/GX_PICA_DESIGN.md`; the Python decoder that uses them has not been extended yet.
 
+## GX register layouts (libogc)
+
+Every GX register field the project decodes was read from devkitPro libogc `libogc/gx.c`
+(the functions that pack the registers) and `gc/ogc/gx.h` (the enum values). The citations
+are in `spm3ds/gx/regs.py`; `tests/gxstream.py` mirrors the packing code independently.
+
 ## Build status
 
-Nothing in `platform/3ds` has been compiled with devkitARM. The host tests (172 passing) cover
-the Python code and the C tiling module only.
+Both apps compile and link in GitHub Actions with devkitARM r68, libctru 2.7.1 and
+citro3d 1.7.1 (`-Werror`). The `3ds-dev` package group is confirmed: it has 20 members and
+is preinstalled in the `devkitpro/devkitarm` image. Note that C3D_TexEnvSrc takes all three
+sources in C (the defaults exist only in C++). Nothing has run on a console yet.

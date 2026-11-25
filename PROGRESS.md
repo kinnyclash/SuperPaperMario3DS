@@ -1,22 +1,34 @@
 # spm3ds Progress
 
-Status is written as tested, untested, or unverified. Nothing here has run on a New 3DS or New 2DS XL yet. The build for those consoles is written but has not been compiled against devkitARM.
+Status is written as tested, untested, or unverified. **Both 3DS apps now compile with devkitARM in GitHub Actions** (first run 2026-11-25), but nothing has run on a New 3DS or New 2DS XL yet.
 
 ## Status at a glance
 
-- Host tests: 172 tests, all passing in our environment. Two groups need optional tools (gcc for equivalence tests; llvm-mc for the LLVM encoding test). See Tests.
-- PowerPC: integer, carry, multiply-high, rotates, FP, update-form memory, CTR loops, paired singles including all quantization types (0, 4, 5, 6, 7), GQR field layout checked against WiiBrew.
-- Jump tables: declared (`JUMPTABLE` lines) and automatically detected from code.
-- Guest memory: flat and sparse paged regions.
-- Diagnostics: guest program counter and instruction counter in generated code; crash report with registers and memory use; shareable `main.dol` report.
-- GX: portable command processor, software rasterizer, PNG writer, texture decoders. Host-only. Sample images in `docs/samples/`.
-- 3DS app: runs the synthetic demo; a hardware diagnostic screen (press Y) reports free memory, New 3DS detection, tick rate, and translated instructions per second. Both are UNCOMPILED on hardware.
-- 3DS graphics app (`make APP=gfx`): textured, rotating cube with a citro3d backend and a picasso vertex shader. Every API name checked against devkitPro's headers (`docs/API_VERIFICATION.md`). UNCOMPILED.
-- Input and audio: Wii Remote to 3DS key mapping; PCM conversion and ring buffer. Host-tested in C and Python. Not on hardware.
-- CI: GitHub Actions workflow for host tests and both 3DS apps. UNTESTED (not run yet); the `3ds-dev` package group name is unverified.
-- Not done: running translated code on hardware, analysis of the real Super Paper Mario `main.dol`, a rendered frame on a console.
+- Host tests: 254, all passing (Python 3.12 in CI, 3.13 locally). The LLVM encoding test now runs where `llvm-mc` is installed.
+- 3DS build: CI builds `spm3ds.3dsx` (CPU app) and `spm3ds_gfx.3dsx` (graphics app) with devkitARM r68, libctru 2.7.1 and citro3d 1.7.1, with `-Werror`. Download them from the run's artifacts.
+- PowerPC: the base set plus overflow (OE) forms with XER.OV/SO, CR logic, `mtcrf`/`mcrf`/`mcrxr`, byte-reversed and multiple-word memory ops, every indexed/update form, FP `fres`/`frsqrte`/`fsel`/`fctiw`/FPSCR moves, and the remaining paired singles. See `docs/PPC_COVERAGE.md`.
+- GX: real register decoding from libogc's layouts (VCD, VAT, arrays, matrices, projection, viewport, cull, Z/blend mode, TEV), indexed vertices and display lists, in Python and in C.
+- **Translated code drives the GPU**: stores to the write-gather pipe are captured (`runtime/hw.c`), decoded by the C command processor (`runtime/gx_cp.c`) and drawn with citro3d. The graphics app shows a cube drawn this way (press A to switch to the native cube).
+- Wii OS: heap, timers, sandboxed files, and now DVD file access through the disc's file table (`runtime/dvd.c`).
+- Diagnostics (CPU app, press Y): memory, New 3DS detection, tick rate, the synthetic benchmark and a mixed integer/memory/branch/FP/paired-single benchmark checked against the interpreter.
+- Not done: Wii OS threads, message queues and alarms; NDSP audio output; running on hardware; analysis of the real Super Paper Mario `main.dol`.
 
-## Completed in this milestone
+## Milestone 2026-11-25: first real 3DS builds and the GX pipeline
+
+Work is in stacked pull requests: #1 → #2 → #4 → #5 → #6 → #7 (and this documentation).
+
+1. **CI (#1).** The workflow was missing from the first upload; restored. Host tests failed on Python 3.12 because `math.fma` is new in 3.13; an exact fallback (fractions, one rounding) matches `math.fma` bit for bit. The first devkitARM build reported two format warnings (`%u` with newlib's `uint32_t`, which is `unsigned long`); fixed, and CI now uses `-Werror`. `tools/check_3ds_syntax.py` type-checks the 3DS sources with clang for ARM against the real libctru/citro3d headers when devkitARM is not installed.
+2. **PowerPC (#2).** `spm3ds/ppc_ext.py` holds decoder, interpreter rule and C translation side by side for each new instruction. Tests: hand-computed results plus interpreter-versus-C on random programs and FP/paired operand vectors.
+3. **GX decoding (#4).** `spm3ds/gx/regs.py` decodes every register field this project uses, each cited to the libogc function that packs it. `tests/gxstream.py` builds FIFO streams the way libogc does, independently of the decoder.
+4. **PowerPC to GX (#5).** MMIO hook, FIFO capture, C command processor, generated guest demo (`tools/make_gx_demo.py`), citro3d scene. The whole chain is checked on the host: interpreter and compiled C agree on every FIFO byte and every triangle.
+5. **Benchmark (#6).** `tools/make_benchmark.py`; about 22.5 guest instructions per iteration; the console checks the result before timing it.
+6. **DVD (#7).** `DVDOpen`, `DVDFastOpen`, `DVDConvertPathToEntrynum`, `DVDReadPrio`, `DVDReadAsyncPrio` and friends, with FST lookup and a sandboxed root. The `DVDFileInfo` offsets are unverified and kept in one table.
+
+Assumptions to check on the console (all listed where they are used):
+- Graphics: GX clip-space depth and the top-screen tilt in `gx_scene.c`; texture byte order and tiling in `tiling.c`.
+- DVD: `DVDFileInfo` offsets in `runtime/dvd.h`.
+
+## Earlier milestone: practical execution
 
 ### 1. Windows build script
 - `tools/windows/build.bat` was missing its `ROOT` definition. Fixed.
@@ -96,28 +108,28 @@ Not done in this milestone (listed in the request, not started):
 
 ## Tests
 
-- 172 tests. Run with `python3 -m unittest discover -s tests -t .`
+- 254 tests. Run with `python3 -m unittest discover -s tests -t .`
 - Equivalence tests need a host `gcc`. The LLVM encoding test needs `llvm-mc` and is skipped without it. The C headers test (input and audio) also needs gcc.
 - Your run of the previous build reported 142 passing and 1 skipped (`test_decoder_agrees_with_llvm_assembler`, because `llvm-mc` is not installed on your machine). That matches our expectation for a machine without `llvm-mc`.
 
 ## Known issues and limits
 
-- The 3DS build is unverified: no devkitARM compile has been run here. The Makefile dry run succeeded against a stub `3ds_rules`.
-- New in this milestone and unverified on hardware: the diagnostic screen (libctru names), the citro3d backend (not built), the clock tick rate, the file root path.
+- Nothing has run on a console. CI compiles and links both apps; behaviour on hardware is untested.
 - Quantization store rounding: truncation is our choice, not a verified rule.
-- GX: CP and BP register decoding is not implemented from hardware bit layouts; vertex formats are set by API.
+- `fres`/`frsqrte`/`ps_res`/`ps_rsqrte` return exact values, not the hardware estimates; FPSCR exception bits and rounding modes are not modelled.
+- GX: lighting, texgen, konst colours, TEV compare modes, indirect textures, alpha test, fog, lines and points are not modelled. The C command processor has no TEV yet (vertex colour only).
+- Hardware registers at 0xCC000000/0xCD000000 are plain storage; status bits the real hardware updates (GPU idle, video beam) are not modelled, so code that polls them may wait forever.
 - Jump-table detection is pattern-based; a switch compiled differently needs a declared table.
 - Windows batch scripts are untested.
 
 ## Blockers
 
-- devkitPro cannot be installed in this sandbox (HTTP 403). The CI workflow is the planned route; your local install is the other.
 - The real `main.dol` is needed for any analysis of Super Paper Mario. You supply it; the project does not contain or distribute it.
+- Hardware testing needs you: the apps are built, but only a console can show whether they run.
 
 ## Next steps
 
-1. Run `tools\windows\build.bat` and `tools\windows\diagnose.bat` on your machine. Send us the `spm3ds-report.md` it creates (it contains no game bytes) and any errors from the build.
-2. Push the repository to GitHub so the CI workflow runs the 3DS build. Send us the first error log if the build fails.
-3. On the console, press Y on the synthetic demo screen and send us the diagnostic output (memory, tick rate, instructions per second).
-4. Analyse your `main.dol` with the diagnostic tool and send the report.
-5. Build both apps (`make APP=cpu` and `make APP=gfx`) and send the first compiler error if any. Expect to adjust the texture byte order if the cube's colours look wrong.
+1. Download `spm3ds-3dsx` and `spm3ds-gfx-3dsx` from the latest successful GitHub Actions run (or build with `tools\windows\build.bat`), copy them to `sdmc:/3ds/`, and start them from the Homebrew Launcher.
+2. Graphics app: say whether both cubes appear, rotate, look solid (not inside out) and have the right colours. Press A to switch.
+3. CPU app: press Y and send the diagnostic output (memory, tick rate, both benchmarks and their PASS/FAIL lines).
+4. Analyse your `main.dol` with `tools\windows\diagnose.bat` and send the report (it contains no game bytes).
