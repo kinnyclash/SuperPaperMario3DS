@@ -18,9 +18,12 @@ modelled.
 import math
 import struct
 from dataclasses import dataclass
+from fractions import Fraction
 
 from .quant import TYPE_FORMATS, dequantize, load_fields, quantize, store_fields
 from .memory import GuestFault
+
+_HAS_MATH_FMA = hasattr(math, "fma")
 
 M32 = 0xFFFFFFFF
 M64 = 0xFFFFFFFFFFFFFFFF
@@ -225,11 +228,31 @@ def fdiv(a, b):
     return a / b
 
 
-def fma(a, c, b):
+def _fma_exact(a, c, b):
+    """a*c+b with one rounding, for Python versions without math.fma (before 3.13).
+
+    The product and sum are computed exactly as fractions; float() then rounds to nearest,
+    ties to even, which is the IEEE default and what math.fma does."""
+    if not (math.isfinite(a) and math.isfinite(c) and math.isfinite(b)):
+        return a * c + b  # infinities and NaN: plain float arithmetic gives the IEEE result
+    if a == 0.0 or c == 0.0:
+        return a * c + b  # exact product zero: float addition keeps the IEEE zero sign rules
+    exact = Fraction(a) * Fraction(c) + Fraction(b)
+    if exact == 0:
+        return 0.0  # exact cancellation of non-zero terms rounds to +0
     try:
-        return math.fma(a, c, b)
-    except ValueError:
-        return math.nan
+        return float(exact)
+    except OverflowError:
+        return math.inf if exact > 0 else -math.inf
+
+
+def fma(a, c, b):
+    if _HAS_MATH_FMA:
+        try:
+            return math.fma(a, c, b)
+        except ValueError:
+            return math.nan
+    return _fma_exact(a, c, b)
 
 
 def single_value(bits):
