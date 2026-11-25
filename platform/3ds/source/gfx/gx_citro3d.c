@@ -85,12 +85,6 @@ int gfx_cube_create(gfx_cube *cube) {
     C3D_TexLoadImage(&cube->tex, pixels, GPU_TEXFACE_2D, 0);
     free(pixels);
     C3D_TexSetFilter(&cube->tex, GPU_LINEAR, GPU_NEAREST);
-    C3D_TexBind(0, &cube->tex);
-
-    C3D_TexEnv *env = C3D_GetTexEnv(0);
-    C3D_TexEnvInit(env);
-    C3D_TexEnvSrc(env, C3D_Both, GPU_TEXTURE0, GPU_PRIMARY_COLOR, 0);
-    C3D_TexEnvFunc(env, C3D_Both, GPU_MODULATE);
 
     /* Vertex buffer in linear memory: GPU-readable. */
     cube->vbo = linearAlloc(sizeof(gfx_vertex) * CUBE_VERTS);
@@ -111,9 +105,6 @@ int gfx_cube_create(gfx_cube *cube) {
     /* Projection: 80 degree field of view, top-screen aspect ratio. */
     Mtx_PerspTilt(&cube->projection, C3D_AngleFromDegrees(80.0f), C3D_AspectRatioTop,
                   0.01f, 1000.0f, false);
-
-    C3D_DepthTest(true, GPU_GREATER, GPU_WRITE_ALL);
-    C3D_CullFace(GPU_CULL_NONE);
     return 0;
 }
 
@@ -124,8 +115,17 @@ void gfx_cube_frame(gfx_cube *cube, float angle_x, float angle_y) {
     Mtx_RotateX(&modelview, angle_x, true);
     Mtx_RotateY(&modelview, angle_y, true);
 
+    /* State is set every frame because the translated-GX scene (gx_scene.c) shares the GPU. */
+    C3D_BindProgram(&cube->program);
     C3D_SetAttrInfo(&cube->attr);
     C3D_SetBufInfo(&cube->buf);
+    C3D_TexBind(0, &cube->tex);
+    C3D_TexEnv *env = C3D_GetTexEnv(0);
+    C3D_TexEnvInit(env);
+    C3D_TexEnvSrc(env, C3D_Both, GPU_TEXTURE0, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
+    C3D_TexEnvFunc(env, C3D_Both, GPU_MODULATE);
+    C3D_DepthTest(true, GPU_GREATER, GPU_WRITE_ALL);
+    C3D_CullFace(GPU_CULL_NONE);
 
     C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
     C3D_FrameDrawOn(cube->target);

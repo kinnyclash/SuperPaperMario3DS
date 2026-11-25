@@ -18,10 +18,24 @@ a layout like this (names follow the usual Wii disc layout):
 |---|---|---|
 | `sys/boot.bin` | Reading the game ID and region, so we can confirm the version | First |
 | `sys/main.dol` | The game's executable code. This is the input to the recompiler | First, required |
+| `sys/fst.bin` | The disc's file table: lets the game open files by number | With `files/` |
 | `files/` (the whole folder) | Game data: models, textures, sounds, levels | Later milestones |
 
-We do **not** need: the apploader, the disc's system partition beyond the two files above,
+We do **not** need: the apploader, the disc's system partition beyond the files above,
 save data, or any other console files.
+
+### Where the files go on the SD card
+
+The CPU app reads disc files from these locations. Copy them yourself from your own
+extracted disc; the project never ships them.
+
+```
+sdmc:/spm3ds/disc/files/     <- the whole files/ folder
+sdmc:/spm3ds/disc/sys/fst.bin
+```
+
+`fst.bin` is optional: without it, file paths are looked up directly in `files/`, but
+opening files by number does not work. Paths that try to leave `files/` are refused.
 
 ## What to tell us (without sending the files)
 

@@ -48,6 +48,12 @@ int main(int argc, char **argv) {
     spm3ds_set_clock(now_ns);
     /* Guest files are read from this folder on the SD card, read-only. UNVERIFIED path. */
     spm3ds_fs_set_root("sdmc:/spm3ds/data");
+    /* Disc files the user extracted from their own copy of the game (see docs/REQUIRED_FILES.md).
+     * The FST is optional: without it, DVD paths map straight to the files directory. */
+    spm3ds_dvd_set_root("sdmc:/spm3ds/disc/files");
+    if (spm3ds_dvd_load_fst_file("sdmc:/spm3ds/disc/sys/fst.bin") > 0) {
+        printf("disc file table loaded\n");
+    }
 
     printf("spm3ds: recompiled PowerPC demo\n");
     ok = spm3ds_synthetic_run();
