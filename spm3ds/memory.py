@@ -33,6 +33,7 @@ class Region:
 class MemoryMap:
     def __init__(self):
         self.regions = []
+        self.mmio = None   # spm3ds.hw.Hardware for addresses no region maps, or None
 
     def add_region(self, name, base, size):
         if size <= 0 or base < 0 or base + size > ADDRESS_SPACE:
@@ -60,11 +61,22 @@ class MemoryMap:
         raise GuestFault(f"access of {n} bytes at {ea:#010x} is not mapped")
 
     def read(self, ea, n):
-        region, offset = self.locate(ea, n)
+        try:
+            region, offset = self.locate(ea, n)
+        except GuestFault:
+            if self.mmio is not None and self.mmio.handles(ea & 0xFFFFFFFF, n):
+                return self.mmio.read(ea & 0xFFFFFFFF, n)
+            raise
         return bytes(region.data[offset:offset + n])
 
     def write(self, ea, data):
-        region, offset = self.locate(ea, len(data))
+        try:
+            region, offset = self.locate(ea, len(data))
+        except GuestFault:
+            if self.mmio is not None and self.mmio.handles(ea & 0xFFFFFFFF, len(data)):
+                self.mmio.write(ea & 0xFFFFFFFF, data)
+                return
+            raise
         region.data[offset:offset + len(data)] = data
 
     def read_uint(self, ea, n):

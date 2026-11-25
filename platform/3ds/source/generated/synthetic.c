@@ -6,6 +6,7 @@ void ppc_dispatch(ppc_ctx *c, uint32_t target);
 void fn_80003000(ppc_ctx *c);
 
 void fn_80003000(ppc_ctx *c) {
+    PPC_BLOCK(0x80003000u, 4u);
     PPC_DIAG(0x80003000u);
     c->r[3] = c->r[3] + 0xFFFFFFFCu;
     PPC_DIAG(0x80003004u);
@@ -15,6 +16,7 @@ void fn_80003000(ppc_ctx *c) {
     PPC_DIAG(0x8000300Cu);
     c->r[6] = 0u + 0x0u;
 L_80003010:
+    PPC_BLOCK(0x80003010u, 3u);
     PPC_DIAG(0x80003010u);
     { uint32_t ea_ = (c->r[3] + 0x4u); c->r[5] = ppc_r32(c, ea_); c->r[3] = ea_; }
     PPC_DIAG(0x80003014u);
@@ -22,6 +24,7 @@ L_80003010:
     PPC_DIAG(0x80003018u);
     c->ctr -= 1u;
     if (((c->ctr != 0u) != 0)) goto L_80003010;
+    PPC_BLOCK(0x8000301Cu, 8u);
     PPC_DIAG(0x8000301Cu);
     c->r[10] = 0u + 0xFFFFFFFFu;
     PPC_DIAG(0x80003020u);
@@ -38,6 +41,7 @@ L_80003010:
     c->r[4] = (c->r[12] | c->r[12]);
     PPC_DIAG(0x80003038u);
     c->lr = 0x8000303Cu; hle_OSReport(c);
+    PPC_BLOCK(0x8000303Cu, 2u);
     PPC_DIAG(0x8000303Cu);
     c->r[3] = (c->r[6] | c->r[6]);
     PPC_DIAG(0x80003040u);
