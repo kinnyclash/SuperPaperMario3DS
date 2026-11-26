@@ -4,6 +4,8 @@
 #   make APP=cpu   -> spm3ds.3dsx      CPU demo: translated PowerPC, diagnostics, NDSP tone
 #   make APP=gfx   -> spm3ds_gfx.3dsx  Graphics demo: textured cube (citro3d), and a cube drawn
 #                                      by translated PowerPC code through GX (press A)
+#   make APP=gfxdiag -> spm3ds_gfxdiag.3dsx  Graphics diagnostic: each graphics operation with
+#                                      a numbered checkpoint on the bottom screen and SD log
 #   make APP=game  -> spm3ds_game.3dsx Boots your own main.dol from the SD card. Needs the
 #                                      translated code in GAME_DIR (default
 #                                      source/game_generated), made on your computer with
@@ -45,6 +47,15 @@ else ifeq ($(APP),gfx)
   LIBS        := -lcitro3d -lctru -lm
   RUNTIME_SRC := $(RUNTIME)/hw.c $(RUNTIME)/gx_cp.c $(RUNTIME)/gx_tex.c
   SHADER_DIRS := source/gfx source/render
+else ifeq ($(APP),gfxdiag)
+  # Graphics diagnostic: the gfx work one checkpointed operation at a time (see its main.c).
+  TARGET      := spm3ds_gfxdiag
+  SOURCES     := source/gfxdiag source/render
+  EXTRA_SRC   := source/gfx/gx_demo.c source/gfx/gx_demo_guest.c
+  EXTRA_INC   := source/gfx
+  LIBS        := -lcitro3d -lctru -lm
+  RUNTIME_SRC := $(RUNTIME)/hw.c $(RUNTIME)/gx_cp.c $(RUNTIME)/gx_tex.c
+  SHADER_DIRS := source/gfx source/render
 else ifeq ($(APP),game)
   ifeq ($(wildcard $(GAME_DIR)/*.c),)
     $(error "No translated game code in $(GAME_DIR). Generate it from your own main.dol (see the comment at the top of this file), or run tools/make_game_stub.py $(GAME_DIR) for a stand-in.")
@@ -57,7 +68,7 @@ else ifeq ($(APP),game)
                  $(RUNTIME)/wii_boot.c
   SHADER_DIRS := source/render
 else
-  $(error "APP must be cpu, gfx or game")
+  $(error "APP must be cpu, gfx, gfxdiag or game")
 endif
 
 BUILD    := build-$(APP)
@@ -73,7 +84,7 @@ DIAG_LEVEL ?= 1
 CFLAGS  := -g -Wall -O2 -mword-relocations -ffunction-sections $(ARCH) -D__3DS__ -std=gnu11 \
            -MMD -MP -DSPM3DS_DIAG_LEVEL=$(DIAG_LEVEL)
 CFLAGS  += $(foreach d,$(INCLUDES),-I$(CURDIR)/$(d)) \
-           $(foreach d,$(SOURCES),-I$(CURDIR)/$(d)) \
+           $(foreach d,$(SOURCES) $(EXTRA_INC),-I$(CURDIR)/$(d)) \
            $(foreach d,$(LIBDIRS),-I$(d)/include) \
            -I$(RUNTIME) -I$(CURDIR)/$(BUILD)
 # Extra flags from the command line, e.g. `make EXTRA_CFLAGS=-Werror` (CI uses this).
@@ -81,7 +92,7 @@ CFLAGS  += $(EXTRA_CFLAGS)
 LDFLAGS := -specs=3dsx.specs -g $(ARCH) $(foreach d,$(LIBDIRS),-L$(d)/lib)
 
 # ---- sources and objects ----------------------------------------------------
-SRC_C := $(shell find $(SOURCES) -name '*.c') $(RUNTIME_SRC)
+SRC_C := $(shell find $(SOURCES) -name '*.c') $(EXTRA_SRC) $(RUNTIME_SRC)
 PICA  := $(foreach d,$(SHADER_DIRS),$(wildcard $(d)/*.v.pica))
 
 # Objects mirror the source tree; "../" is rewritten so files outside the tree stay in $(BUILD).
@@ -137,4 +148,5 @@ $(BUILD)/%.shbin.o: $(BUILD)/%.shbin $(BUILD)/%_shbin.h
 -include $(DEP)
 
 clean:
-	rm -rf build-cpu build-gfx build-game spm3ds.3dsx spm3ds_gfx.3dsx spm3ds_game.3dsx
+	rm -rf build-cpu build-gfx build-gfxdiag build-game spm3ds.3dsx spm3ds_gfx.3dsx \
+	       spm3ds_gfxdiag.3dsx spm3ds_game.3dsx

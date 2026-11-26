@@ -40,6 +40,9 @@ jobs:
       - name: Build the graphics demo (APP=gfx)
         working-directory: platform/3ds
         run: make APP=gfx EXTRA_CFLAGS=-Werror
+      - name: Build the graphics diagnostic (APP=gfxdiag)
+        working-directory: platform/3ds
+        run: make APP=gfxdiag EXTRA_CFLAGS=-Werror
       # The game app needs translated game code, which only exists on the user's computer.
       # CI builds it from the stand-in game (tools/make_game_stub.py) to check that it links.
       - name: Build the game app with the stand-in game (APP=game)
@@ -57,6 +60,11 @@ jobs:
           name: spm3ds-gfx-3dsx
           path: platform/3ds/spm3ds_gfx.3dsx
           if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spm3ds-gfxdiag-3dsx
+          path: platform/3ds/spm3ds_gfxdiag.3dsx
+          if-no-files-found: error
       # The stand-in build embeds the test DOL, so it boots with no SD files. stub_main.dol is
       # kept for reference. It is not the game.
       - uses: actions/upload-artifact@v4
@@ -73,6 +81,7 @@ jobs:
           path: |
             platform/3ds/build-cpu/spm3ds.elf
             platform/3ds/build-gfx/spm3ds_gfx.elf
+            platform/3ds/build-gfxdiag/spm3ds_gfxdiag.elf
             platform/3ds/build-game/spm3ds_game.elf
           if-no-files-found: error
 
@@ -101,11 +110,13 @@ jobs:
             0xF5301 CTR-P-SPMC "spm3ds CPU test" "Translated PowerPC + NDSP tone" C 2060C0
           tools/cia/build_cia.sh "$(find elf -name spm3ds_gfx.elf)" cia/spm3ds_gfx.cia \
             0xF5302 CTR-P-SPMG "spm3ds GFX test" "GX to citro3d cube demo" G 20A050
+          tools/cia/build_cia.sh "$(find elf -name spm3ds_gfxdiag.elf)" cia/spm3ds_gfxdiag.cia \
+            0xF5304 CTR-P-SPMD "spm3ds GFX diagnostic" "Graphics checkpoints on the bottom screen" D D08020
           tools/cia/build_cia.sh "$(find elf -name spm3ds_game.elf)" cia/spm3ds_game_test.cia \
             0xF5303 CTR-P-SPMT "spm3ds boot test" "Boots the embedded test DOL" B C04040
       - name: Verify the CIAs
         run: |
-          for f in cia/spm3ds_cpu.cia cia/spm3ds_gfx.cia cia/spm3ds_game_test.cia; do
+          for f in cia/spm3ds_cpu.cia cia/spm3ds_gfx.cia cia/spm3ds_gfxdiag.cia cia/spm3ds_game_test.cia; do
             test -s "$f" || { echo "missing $f"; exit 1; }
             ls -l "$f"; sha256sum "$f"
             if command -v ctrtool >/dev/null; then ctrtool -p "$f" | head -n 40 || true; fi
@@ -138,7 +149,7 @@ jobs:
           mkdir -p out
           find art -type f \( -name '*.cia' -o -name '*.3dsx' \) -exec cp {} out/ \;
           base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
-          for n in cpu gfx game_test; do
+          for n in cpu gfx gfxdiag game_test; do
             qrencode -s 8 -m 2 -o "out/qr_${n}.png" "$base/spm3ds_${n}.cia"
           done
           ls -l out
@@ -156,9 +167,10 @@ jobs:
             echo "|---|---|---|---|"
             echo "| CPU test | 000400000F530100 | $base/spm3ds_cpu.cia | ![cpu]($base/qr_cpu.png) |"
             echo "| GFX test | 000400000F530200 | $base/spm3ds_gfx.cia | ![gfx]($base/qr_gfx.png) |"
+            echo "| GFX diagnostic (checkpoints on the bottom screen, log in sdmc:/spm3ds/gfxdiag.log) | 000400000F530400 | $base/spm3ds_gfxdiag.cia | ![gfxdiag]($base/qr_gfxdiag.png) |"
             echo "| Game boot test (embedded test DOL, no SD files) | 000400000F530300 | $base/spm3ds_game_test.cia | ![game]($base/qr_game_test.png) |"
             echo
-            echo ".3dsx builds for the Homebrew Launcher: spm3ds.3dsx, spm3ds_gfx.3dsx, spm3ds_game.3dsx."
+            echo ".3dsx builds for the Homebrew Launcher: spm3ds.3dsx, spm3ds_gfx.3dsx, spm3ds_gfxdiag.3dsx, spm3ds_game.3dsx."
           } > notes.md
           gh release delete "$TAG" -R "$GITHUB_REPOSITORY" --cleanup-tag -y || true
           gh release create "$TAG" -R "$GITHUB_REPOSITORY" --prerelease --target "$GITHUB_SHA" \

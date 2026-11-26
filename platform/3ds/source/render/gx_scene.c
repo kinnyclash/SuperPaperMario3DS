@@ -142,9 +142,13 @@ int gx_scene_create(gx_scene *s, ppc_ctx *ctx, spm3ds_hw *hw) {
 }
 
 void gx_scene_present(gx_scene *s, C3D_RenderTarget *target) {
+    gx_scene_prepare(s);
+    gx_scene_draw(s, target);
+}
+
+void gx_scene_prepare(gx_scene *s) {
     u32 i, n;
     size_t used;
-    C3D_TexEnv *env;
     gx_scene_texture **bound;
 
     /* 1-2. Decode what the guest sent since the last frame into clip-space triangles. */
@@ -197,6 +201,15 @@ void gx_scene_present(gx_scene *s, C3D_RenderTarget *target) {
         }
         GSPGPU_FlushDataCache(s->vbo, n * sizeof(gx_scene_vertex));
     }
+    free(s->bound);
+    s->bound = bound;
+    s->vertices = n;
+}
+
+void gx_scene_draw(gx_scene *s, C3D_RenderTarget *target) {
+    u32 n = s->vertices;
+    C3D_TexEnv *env;
+    gx_scene_texture **bound = s->bound;
 
     /* 4. Draw with citro3d, one call per batch; depth test as in the citro3d examples. */
     C3D_BindProgram(&s->program);
@@ -205,9 +218,11 @@ void gx_scene_present(gx_scene *s, C3D_RenderTarget *target) {
     C3D_DepthTest(true, GPU_GREATER, GPU_WRITE_ALL);
     C3D_CullFace(GPU_CULL_NONE);
 
-    C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
-    C3D_FrameDrawOn(target);
-    C3D_RenderTargetClear(target, C3D_CLEAR_ALL, 0x202028FFu, 0);
+    if (!s->external_frame) {
+        C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+        C3D_FrameDrawOn(target);
+        C3D_RenderTargetClear(target, C3D_CLEAR_ALL, 0x202028FFu, 0);
+    }
     {
         u32 bi;
         for (bi = 0; bi < s->cp->batch_count; bi++) {
@@ -230,8 +245,7 @@ void gx_scene_present(gx_scene *s, C3D_RenderTarget *target) {
             if (count) C3D_DrawArrays(GPU_TRIANGLES, (int)b->first, (int)count);
         }
     }
-    C3D_FrameEnd(0);
-    free(bound);
+    if (!s->external_frame) C3D_FrameEnd(0);
 }
 
 void gx_scene_destroy(gx_scene *s) {
@@ -242,6 +256,7 @@ void gx_scene_destroy(gx_scene *s) {
         gx_cp_free(s->cp);
         free(s->cp);
     }
+    free(s->bound);
     if (s->vbo) linearFree(s->vbo);
     shaderProgramFree(&s->program);
     if (s->dvlb) DVLB_Free(s->dvlb);

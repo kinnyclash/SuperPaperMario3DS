@@ -44,15 +44,20 @@ def shader_stub(name):
 RUNTIME_FILES = {
     "cpu": ("hle.c", "os.c", "mem.c", "hw.c", "dvd.c", "os_thread.c"),
     "gfx": ("hw.c", "gx_cp.c", "gx_tex.c"),
+    "gfxdiag": ("hw.c", "gx_cp.c", "gx_tex.c"),
     "game": ("hle.c", "os.c", "mem.c", "hw.c", "dvd.c", "os_thread.c", "gx_cp.c", "gx_tex.c",
              "wii_boot.c"),
 }
 APP_DIRS = {
     "cpu": ["source/cpu", "source/generated", "source/audio"],
     "gfx": ["source/gfx", "source/render"],
+    "gfxdiag": ["source/gfxdiag", "source/render"],
     "game": ["source/game", "source/render", "source/audio"],   # plus the generated game code
 }
-SHADER_DIRS = {"cpu": [], "gfx": ["source/gfx", "source/render"], "game": ["source/render"]}
+SHADER_DIRS = {"cpu": [], "gfx": ["source/gfx", "source/render"],
+               "gfxdiag": ["source/gfx", "source/render"], "game": ["source/render"]}
+EXTRA_FILES = {"gfxdiag": ["source/gfx/gx_demo.c", "source/gfx/gx_demo_guest.c"]}
+EXTRA_INC = {"gfxdiag": ["source/gfx"]}
 
 
 def app_sources(app, game_dir=None):
@@ -64,6 +69,7 @@ def app_sources(app, game_dir=None):
     for full in dirs:
         for dirpath, _, names in os.walk(full):
             files += [os.path.join(dirpath, n) for n in sorted(names) if n.endswith(".c")]
+    files += [os.path.join(PLATFORM, n) for n in EXTRA_FILES.get(app, [])]
     files += [os.path.join(RUNTIME, n) for n in RUNTIME_FILES[app]]
     return files
 
@@ -99,7 +105,7 @@ def check(libctru, citro3d, clang="clang", verbose=False):
         sys.path.insert(0, os.path.join(ROOT, "tools"))
         import make_game_stub
         make_game_stub.build(game_dir)
-        for app in ("cpu", "gfx", "game"):
+        for app in ("cpu", "gfx", "gfxdiag", "game"):
             for name in shader_names(app):
                 with open(os.path.join(stub, f"{name}_shbin.h"), "w") as f:
                     f.write(shader_stub(name))
@@ -107,7 +113,7 @@ def check(libctru, citro3d, clang="clang", verbose=False):
                 cmd = [clang, "--target=armv6k-none-eabihf", "-mfloat-abi=hard", "-D__3DS__",
                        "-std=gnu11", "-fsyntax-only", "-Wall", "-Wextra", "-Wno-unused-label",
                        "-I", libctru, "-I", RUNTIME, "-I", stub, "-I", game_dir, "-I", citro3d]
-                for rel in APP_DIRS[app]:
+                for rel in APP_DIRS[app] + EXTRA_INC.get(app, []):
                     cmd += ["-I", os.path.join(PLATFORM, rel)]
                 for d in host_multiarch_dirs():
                     cmd += ["-isystem", d]
