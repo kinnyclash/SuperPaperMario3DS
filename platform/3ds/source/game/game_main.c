@@ -14,6 +14,9 @@
  *   sdmc:/spm3ds/disc/files/         disc files
  * Hold START + SELECT to quit.
  *
+ * Stand-in builds (tools/make_game_stub.py) also link game_embedded.c, which holds the stub
+ * DOL; the app then boots it without any SD card files. Real game builds never contain it.
+ *
  * UNVERIFIED ON HARDWARE; the host tests run the same boot sequence (tests/test_game_boot.py).
  * MIT License. */
 #include <3ds.h>
@@ -41,6 +44,9 @@
 #define MAIN_THREAD_GUEST 0x80001800u  /* unused exception area (WiiBrew), holds no data */
 
 extern const uint32_t spm3ds_game_dol_size, spm3ds_game_dol_crc32, spm3ds_game_entry_address;
+/* Present only in stand-in builds (weak: real game builds leave them undefined). */
+extern const uint32_t spm3ds_game_embedded_dol_size __attribute__((weak));
+extern const uint8_t spm3ds_game_embedded_dol[] __attribute__((weak));
 void spm3ds_game_entry(ppc_ctx *c);
 
 static ppc_ctx *ctx;
@@ -132,7 +138,14 @@ int main(void) {
     if (!target) stop("Could not create the render target.");
     C3D_RenderTargetSetOutput(target, GFX_TOP, GFX_LEFT, DISPLAY_TRANSFER_FLAGS);
 
-    dol = read_file("sdmc:/spm3ds/disc/sys/main.dol", &dol_size);
+    if (&spm3ds_game_embedded_dol_size != NULL) {
+        dol_size = spm3ds_game_embedded_dol_size;
+        dol = (uint8_t *)malloc(dol_size);
+        if (dol) memcpy(dol, spm3ds_game_embedded_dol, dol_size);
+        printf("stand-in build: booting the embedded test DOL\n");
+    } else {
+        dol = read_file("sdmc:/spm3ds/disc/sys/main.dol", &dol_size);
+    }
     if (!dol) {
         stop("sdmc:/spm3ds/disc/sys/main.dol not found.\n"
              "Copy main.dol from your own extracted disc (see docs/REQUIRED_FILES.md).");

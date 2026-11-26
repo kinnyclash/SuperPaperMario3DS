@@ -106,6 +106,14 @@ class GameBoot(unittest.TestCase):
         self.assertIn(f"spm3ds_game_dol_size = {len(self.dol_bytes)}u", info)
         self.assertIn(f"0x{zlib.crc32(self.dol_bytes):08X}u", info)
 
+    def test_embedded_dol_matches(self):
+        with open(os.path.join(self.tmp, "gen", "game_embedded.c")) as f:
+            text = f.read()
+        body = text.split("{", 1)[1].split("}", 1)[0]
+        data = bytes(int(x, 16) for x in body.replace(",", " ").split())
+        self.assertEqual(data, self.dol_bytes)
+        self.assertIn(f"spm3ds_game_embedded_dol_size = {len(self.dol_bytes)}u", text)
+
     def test_boots_and_presents_three_frames(self):
         out = subprocess.run([self.exe, self.dol], capture_output=True, text=True, timeout=30)
         self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
