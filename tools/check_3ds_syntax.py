@@ -55,7 +55,7 @@ APP_DIRS = {
     "game": ["source/game", "source/render", "source/audio"],   # plus the generated game code
 }
 SHADER_DIRS = {"cpu": [], "gfx": ["source/gfx", "source/render"],
-               "gfxdiag": ["source/gfx", "source/render"], "game": ["source/render"]}
+               "gfxdiag": ["source/gfx", "source/render", "source/gfxdiag"], "game": ["source/render"]}
 EXTRA_FILES = {"gfxdiag": ["source/gfx/gx_demo.c", "source/gfx/gx_demo_guest.c"]}
 EXTRA_INC = {"gfxdiag": ["source/gfx"]}
 

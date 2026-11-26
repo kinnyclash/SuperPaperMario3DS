@@ -55,7 +55,7 @@ else ifeq ($(APP),gfxdiag)
   EXTRA_INC   := source/gfx
   LIBS        := -lcitro3d -lctru -lm
   RUNTIME_SRC := $(RUNTIME)/hw.c $(RUNTIME)/gx_cp.c $(RUNTIME)/gx_tex.c
-  SHADER_DIRS := source/gfx source/render
+  SHADER_DIRS := source/gfx source/render source/gfxdiag
 else ifeq ($(APP),game)
   ifeq ($(wildcard $(GAME_DIR)/*.c),)
     $(error "No translated game code in $(GAME_DIR). Generate it from your own main.dol (see the comment at the top of this file), or run tools/make_game_stub.py $(GAME_DIR) for a stand-in.")

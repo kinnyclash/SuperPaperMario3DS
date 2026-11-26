@@ -142,8 +142,14 @@ int gx_scene_create(gx_scene *s, ppc_ctx *ctx, spm3ds_hw *hw) {
 }
 
 void gx_scene_present(gx_scene *s, C3D_RenderTarget *target) {
+    /* Begin the frame first: it waits until the GPU finished the previous one, so the
+     * textures prepare() replaces are no longer being read. */
+    C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
     gx_scene_prepare(s);
+    C3D_FrameDrawOn(target);
+    C3D_RenderTargetClear(target, C3D_CLEAR_ALL, 0x202028FFu, 0);
     gx_scene_draw(s, target);
+    C3D_FrameEnd(0);
 }
 
 void gx_scene_prepare(gx_scene *s) {
@@ -183,7 +189,8 @@ void gx_scene_prepare(gx_scene *s) {
     s->triangles = n / 3u;
 
     /* 3b. Textures: upload what the batches use, and scale their coordinates for the
-     * power-of-two padding. Done before the frame starts so uploads do not split it. */
+     * power-of-two padding. Must run while the GPU is idle (inside a frame that has begun,
+     * before any draw): a replaced texture is deleted here. */
     bound = (gx_scene_texture **)calloc(s->cp->batch_count ? s->cp->batch_count : 1,
                                         sizeof *bound);
     {
@@ -218,11 +225,7 @@ void gx_scene_draw(gx_scene *s, C3D_RenderTarget *target) {
     C3D_DepthTest(true, GPU_GREATER, GPU_WRITE_ALL);
     C3D_CullFace(GPU_CULL_NONE);
 
-    if (!s->external_frame) {
-        C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
-        C3D_FrameDrawOn(target);
-        C3D_RenderTargetClear(target, C3D_CLEAR_ALL, 0x202028FFu, 0);
-    }
+    (void)target;
     {
         u32 bi;
         for (bi = 0; bi < s->cp->batch_count; bi++) {
@@ -245,7 +248,6 @@ void gx_scene_draw(gx_scene *s, C3D_RenderTarget *target) {
             if (count) C3D_DrawArrays(GPU_TRIANGLES, (int)b->first, (int)count);
         }
     }
-    if (!s->external_frame) C3D_FrameEnd(0);
 }
 
 void gx_scene_destroy(gx_scene *s) {

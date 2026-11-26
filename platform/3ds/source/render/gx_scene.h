@@ -46,7 +46,6 @@ typedef struct {
     int error;         /* command processor error flag from the last frame */
     u32 vertices;      /* prepared for the next gx_scene_draw */
     gx_scene_texture **bound; /* texture per batch, prepared for the next gx_scene_draw */
-    int external_frame; /* 1: the caller begins and ends the citro3d frame and clears */
 } gx_scene;
 
 /* ctx and hw belong to the caller and must outlive the scene. 0 on success. */
@@ -54,9 +53,10 @@ int gx_scene_create(gx_scene *s, ppc_ctx *ctx, spm3ds_hw *hw);
 /* Decodes the captured FIFO and draws one frame on target. A command cut off at the end
  * of the FIFO is kept for the next frame. */
 void gx_scene_present(gx_scene *s, C3D_RenderTarget *target);
-/* present() in two halves: prepare decodes the FIFO and fills the vertex buffer and textures
- * (CPU only, no GPU commands); draw submits them (inside its own frame unless
- * external_frame is set). The diagnostic app checks the vertices between the two. */
+/* present() in two halves, for callers that run the frame themselves: prepare decodes the
+ * FIFO and fills the vertex buffer and textures (it may delete a replaced texture, so call it
+ * only after C3D_FrameBegin has returned, i.e. with the GPU idle); draw submits the batches
+ * to the current frame, which the caller has begun, targeted and cleared. */
 void gx_scene_prepare(gx_scene *s);
 void gx_scene_draw(gx_scene *s, C3D_RenderTarget *target);
 void gx_scene_destroy(gx_scene *s);
