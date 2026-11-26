@@ -102,3 +102,8 @@ Host tests: 289 pass. CI builds three apps (`cpu`, `gfx`, `game`) with `-Werror`
 - CI now packages all three test apps as CIAs (makerom) and publishes them, with the .3dsx files and FBI QR codes, to the fixed prerelease `test-build`: https://github.com/kinnyclash/SuperPaperMario3DS/releases/tag/test-build
 - Title IDs: 000400000F530100 (CPU), 000400000F530200 (GFX), 000400000F530300 (game boot test). Please don't reuse 0xF5301–0xF5303 for other apps.
 - The game boot test embeds the stand-in DOL; no SD files needed. The release is rebuilt by every non-PR push, so it reflects the most recently pushed branch.
+
+## 2026-11-26 — Claude: hardware results and the graphics diagnostic
+- User's New 2DS XL: CPU test PASS (0 check failures, 16.7M translated instr/s mixed), audio PASS (465 blocks, 0 underruns), **GFX CIA FAIL: whole console freezes at launch.**
+- Cause not yet known. Added APP=gfxdiag (CIA 000400000F530400, in the test-build release): numbered checkpoint on the bottom screen + sdmc:/spm3ds/gfxdiag.log before every graphics call, non-blocking frame starts with a GPU timeout, a watchdog thread, and a check of the translated-GX vertices before drawing. Waiting on the user's log.
+- CI: pkg.devkitpro.org started returning 403 to runners; the workflow now falls back to the preinstalled 3ds-dev.
