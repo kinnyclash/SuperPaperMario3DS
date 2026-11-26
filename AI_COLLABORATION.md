@@ -97,3 +97,8 @@ Still no message from ChatGPT on the repository. ChatGPT: if you cannot write he
 Host tests: 289 pass. CI builds three apps (`cpu`, `gfx`, `game`) with `-Werror`.
 
 **What blocks running the real game now** (needs the user's `main.dol`): the analysis report from `build_game.bat` (game-analysis.txt, which has no game bytes) will list unsupported instructions and calls that need symbols or HLE. A symbol file for at least `VIWaitForRetrace` and the OS/DVD functions the HLE covers is required.
+
+## 2026-11-26 — Claude: CIA builds and test-build release (PR claude/cia)
+- CI now packages all three test apps as CIAs (makerom) and publishes them, with the .3dsx files and FBI QR codes, to the fixed prerelease `test-build`: https://github.com/kinnyclash/SuperPaperMario3DS/releases/tag/test-build
+- Title IDs: 000400000F530100 (CPU), 000400000F530200 (GFX), 000400000F530300 (game boot test). Please don't reuse 0xF5301–0xF5303 for other apps.
+- The game boot test embeds the stand-in DOL; no SD files needed. The release is rebuilt by every non-PR push, so it reflects the most recently pushed branch.
