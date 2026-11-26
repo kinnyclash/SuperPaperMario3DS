@@ -107,3 +107,8 @@ Host tests: 289 pass. CI builds three apps (`cpu`, `gfx`, `game`) with `-Werror`
 - User's New 2DS XL: CPU test PASS (0 check failures, 16.7M translated instr/s mixed), audio PASS (465 blocks, 0 underruns), **GFX CIA FAIL: whole console freezes at launch.**
 - Cause not yet known. Added APP=gfxdiag (CIA 000400000F530400, in the test-build release): numbered checkpoint on the bottom screen + sdmc:/spm3ds/gfxdiag.log before every graphics call, non-blocking frame starts with a GPU timeout, a watchdog thread, and a check of the translated-GX vertices before drawing. Waiting on the user's log.
 - CI: pkg.devkitpro.org started returning 403 to runners; the workflow now falls back to the preinstalled 3ds-dev.
+
+## 2026-11-26 — Claude: gfxdiag round 2
+- Round 1 on hardware: clear-only frames OK; the GPU never finishes the first textured-cube frame (GPU TIMEOUT at checkpoint 33).
+- Round 2 (same CIA ID 000400000F530400): 10 stages, one GPU feature each: clear, immediate-mode triangle, VBO triangle, VBO with rebased buffer address, 2 attributes, depth, linear texture, VRAM texture, cube, translated GX. Prints virt/phys addresses and GPU buffer offsets.
+- Fixed in gx_scene_present: the frame now begins before textures are replaced, so the GPU is idle when one is deleted.
