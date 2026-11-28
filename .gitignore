@@ -13,3 +13,6 @@ build-cpu/
 build-gfx/
 *.elf
 *.d
+# Translated game code: generated on your own computer from your own main.dol. Keep private.
+platform/3ds/source/game_generated/
+build-game/

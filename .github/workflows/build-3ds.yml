@@ -1,0 +1,208 @@
+# CI for spm3ds. First successful run: 2026-11-25 (both .3dsx files built).
+#
+# Job 1 runs the host tests on a standard Linux runner (Python 3, gcc).
+# Job 2 builds the three apps (.3dsx + .elf) in devkitPro's devkitARM container.
+# Job 3 packages the ELFs as CIAs (makerom); job 4 publishes the "test-build" prerelease.
+#
+# The "3ds-dev" package group was confirmed by the first CI run (2026-11-25): it has 20 members,
+# including libctru, citro3d, picasso, 3dstools and devkitARM, and is preinstalled in the image.
+# Both apps compile with EXTRA_CFLAGS=-Werror, so a new compiler warning fails the build.
+name: build-3ds
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Unit tests
+        run: python3 -m unittest discover -s tests -t .
+
+  build-3ds:
+    needs: host-tests
+    runs-on: ubuntu-latest
+    container: devkitpro/devkitarm:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install 3DS dependencies (libctru, citro3d, picasso)
+        run: |
+          # The image already ships 3ds-dev; the sync only refreshes it. pkg.devkitpro.org has
+          # refused runners (403), so a failed sync falls back to the preinstalled packages.
+          dkp-pacman -Sy --noconfirm --needed 3ds-dev || echo "package sync failed; using preinstalled 3ds-dev"
+          for t in picasso 3dsxtool bin2s; do command -v $t || ls $DEVKITPRO/tools/bin/$t; done
+          ls $DEVKITPRO/libctru/lib/libcitro3d.a $DEVKITPRO/libctru/lib/libctru.a
+      - name: Build the CPU demo (APP=cpu)
+        working-directory: platform/3ds
+        run: make APP=cpu EXTRA_CFLAGS=-Werror
+      - name: Build the graphics demo (APP=gfx)
+        working-directory: platform/3ds
+        run: make APP=gfx EXTRA_CFLAGS=-Werror
+      - name: Build the graphics diagnostic (APP=gfxdiag)
+        working-directory: platform/3ds
+        run: make APP=gfxdiag EXTRA_CFLAGS=-Werror
+      # Crash-dump helper: maps the PC from a data-abort screen to its function. Only reads the
+      # ELF and prints to the log; the app itself is unchanged. Set CRASH_PC to the PC shown.
+      - name: Symbolize gfxdiag crash address
+        working-directory: platform/3ds
+        env:
+          CRASH_PC: "0x00109C4C"
+        run: |
+          elf=build-gfxdiag/spm3ds_gfxdiag.elf
+          nm=$DEVKITARM/bin/arm-none-eabi-nm
+          objdump=$DEVKITARM/bin/arm-none-eabi-objdump
+          python3 - "$elf" "$nm" "$CRASH_PC" <<'PY'
+          import subprocess, sys
+          elf, nm, pc = sys.argv[1], sys.argv[2], int(sys.argv[3], 16)
+          syms = []
+          for line in subprocess.check_output([nm, "-n", "-S", "--defined-only", elf], text=True).splitlines():
+              parts = line.split()
+              if len(parts) >= 4 and parts[-2] in "tTwW":
+                  syms.append((int(parts[0], 16), parts[-1]))
+          best = max((s for s in syms if s[0] <= pc), default=None)
+          print(f"PC {pc:#010x} is in {best[1]} + {pc - best[0]:#x}" if best else "no symbol")
+          print("nearby symbols:")
+          for addr, name in syms:
+              if abs(addr - pc) < 0x200:
+                  print(f"  {addr:#010x} {name}")
+          PY
+          "$objdump" -d --start-address=$((CRASH_PC - 0x40)) --stop-address=$((CRASH_PC + 0x20)) "$elf" || true
+      # The game app needs translated game code, which only exists on the user's computer.
+      # CI builds it from the stand-in game (tools/make_game_stub.py) to check that it links.
+      - name: Build the game app with the stand-in game (APP=game)
+        run: |
+          command -v python3 >/dev/null || (apt-get update && apt-get install -y --no-install-recommends python3)
+          python3 tools/make_game_stub.py platform/3ds/source/game_generated --dol platform/3ds/stub_main.dol
+          cd platform/3ds && make APP=game EXTRA_CFLAGS=-Werror
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spm3ds-3dsx
+          path: platform/3ds/spm3ds.3dsx
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spm3ds-gfx-3dsx
+          path: platform/3ds/spm3ds_gfx.3dsx
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spm3ds-gfxdiag-3dsx
+          path: platform/3ds/spm3ds_gfxdiag.3dsx
+          if-no-files-found: error
+      # The stand-in build embeds the test DOL, so it boots with no SD files. stub_main.dol is
+      # kept for reference. It is not the game.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spm3ds-game-stub
+          path: |
+            platform/3ds/spm3ds_game.3dsx
+            platform/3ds/stub_main.dol
+          if-no-files-found: error
+      # The ELF files are what makerom turns into CIAs in the package job.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spm3ds-elf
+          path: |
+            platform/3ds/build-cpu/spm3ds.elf
+            platform/3ds/build-gfx/spm3ds_gfx.elf
+            platform/3ds/build-gfxdiag/spm3ds_gfxdiag.elf
+            platform/3ds/build-game/spm3ds_game.elf
+          if-no-files-found: error
+
+  # Installable CIA builds of the three test apps. Unique IDs sit in the homebrew range
+  # (0xF0000-0xFFFFF); title ID = 0x00040000 << 32 | unique ID << 8.
+  package-cia:
+    needs: build-3ds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: spm3ds-elf
+          path: elf
+      - name: Download makerom, ctrtool and bannertool
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tools/cia/fetch_tools.sh "$HOME/ctrbin"
+          echo "$HOME/ctrbin" >> "$GITHUB_PATH"
+      - name: Build the three CIAs
+        run: |
+          find elf -name '*.elf'
+          mkdir -p cia
+          tools/cia/build_cia.sh "$(find elf -name spm3ds.elf)" cia/spm3ds_cpu.cia \
+            0xF5301 CTR-P-SPMC "spm3ds CPU test" "Translated PowerPC + NDSP tone" C 2060C0
+          tools/cia/build_cia.sh "$(find elf -name spm3ds_gfx.elf)" cia/spm3ds_gfx.cia \
+            0xF5302 CTR-P-SPMG "spm3ds GFX test" "GX to citro3d cube demo" G 20A050
+          tools/cia/build_cia.sh "$(find elf -name spm3ds_gfxdiag.elf)" cia/spm3ds_gfxdiag.cia \
+            0xF5304 CTR-P-SPMD "spm3ds GFX diagnostic" "Graphics checkpoints on the bottom screen" D D08020
+          tools/cia/build_cia.sh "$(find elf -name spm3ds_game.elf)" cia/spm3ds_game_test.cia \
+            0xF5303 CTR-P-SPMT "spm3ds boot test" "Boots the embedded test DOL" B C04040
+      - name: Verify the CIAs
+        run: |
+          for f in cia/spm3ds_cpu.cia cia/spm3ds_gfx.cia cia/spm3ds_gfxdiag.cia cia/spm3ds_game_test.cia; do
+            test -s "$f" || { echo "missing $f"; exit 1; }
+            ls -l "$f"; sha256sum "$f"
+            if command -v ctrtool >/dev/null; then ctrtool -p "$f" | head -n 40 || true; fi
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spm3ds-cia
+          path: cia/*.cia
+          if-no-files-found: error
+
+  # Publishes everything to the fixed "test-build" prerelease, so the download URLs (and the
+  # QR codes for FBI's Remote Install) stay the same from build to build.
+  release:
+    needs: [build-3ds, package-cia]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency: test-build-release
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: test-build
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: art
+      - name: Collect files and make QR codes
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq qrencode
+          mkdir -p out
+          find art -type f \( -name '*.cia' -o -name '*.3dsx' \) -exec cp {} out/ \;
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          for n in cpu gfx gfxdiag game_test; do
+            qrencode -s 8 -m 2 -o "out/qr_${n}.png" "$base/spm3ds_${n}.cia"
+          done
+          ls -l out
+      - name: Publish the test-build prerelease
+        run: |
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          short=$(echo "$GITHUB_SHA" | cut -c1-7)
+          {
+            echo "Automatic test build from \`${GITHUB_REF_NAME}\` at ${short}. Not the game: these"
+            echo "are the spm3ds test apps. No game files are included."
+            echo
+            echo "Install with FBI: Remote Install -> Scan QR Code, then scan the code for an app."
+            echo
+            echo "| App | Title ID | CIA | QR |"
+            echo "|---|---|---|---|"
+            echo "| CPU test | 000400000F530100 | $base/spm3ds_cpu.cia | ![cpu]($base/qr_cpu.png) |"
+            echo "| GFX test | 000400000F530200 | $base/spm3ds_gfx.cia | ![gfx]($base/qr_gfx.png) |"
+            echo "| GFX diagnostic (checkpoints on the bottom screen, log in sdmc:/spm3ds/gfxdiag.log) | 000400000F530400 | $base/spm3ds_gfxdiag.cia | ![gfxdiag]($base/qr_gfxdiag.png) |"
+            echo "| Game boot test (embedded test DOL, no SD files) | 000400000F530300 | $base/spm3ds_game_test.cia | ![game]($base/qr_game_test.png) |"
+            echo
+            echo ".3dsx builds for the Homebrew Launcher: spm3ds.3dsx, spm3ds_gfx.3dsx, spm3ds_gfxdiag.3dsx, spm3ds_game.3dsx."
+          } > notes.md
+          gh release delete "$TAG" -R "$GITHUB_REPOSITORY" --cleanup-tag -y || true
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --prerelease --target "$GITHUB_SHA" \
+            --title "spm3ds test build (${short})" --notes-file notes.md out/*
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json assets -q '.assets[].url'
