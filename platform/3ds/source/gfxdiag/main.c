@@ -222,7 +222,14 @@ static int shader_load(shader *s, const char *name, const u8 *bin, u32 size) {
     return 0;
 }
 
+/* A bound program must outlive its binding: C3D_BindProgram reads the program that is bound
+ * when the next one is bound. The round-2 crash (data abort in C3D_BindProgram, FAR 0) was
+ * the vbo-tri stage binding over a freed imm-tri program. So each stage's program is freed
+ * only after a long-lived "keep" program has been bound in its place. */
+static shader keep_shader;
+
 static void shader_free(shader *s) {
+    if (keep_shader.ok) C3D_BindProgram(&keep_shader.prog);
     if (s->ok) shaderProgramFree(&s->prog);
     if (s->dvlb) DVLB_Free(s->dvlb);
     memset(s, 0, sizeof *s);
@@ -721,6 +728,11 @@ int main(void) {
         fail("C3D_Init returned false");
         gpu_hung = 1;
     } else {
+        cp("keep-alive shader program (stays bound between stages)");
+        if (shader_load(&keep_shader, "keep", tri_shbin, tri_shbin_size) == 0) {
+            C3D_BindProgram(&keep_shader.prog);
+            keep_shader.ok = 1;
+        }
         cp("render target 240x400 RGBA8 + D24S8, output top");
         target = C3D_RenderTargetCreate(240, 400, GPU_RB_RGBA8, GPU_RB_DEPTH24_STENCIL8);
         if (!target) {
@@ -750,6 +762,10 @@ int main(void) {
     }
 
     step_mode = 0;
+    if (keep_shader.ok && !gpu_hung) {
+        C3D_BindProgram(&keep_shader.prog);
+        shader_free(&keep_shader);
+    }
     if (gpu_hung) {
         out("", "GPU hung: skipping C3D_Fini (it would wait for the GPU forever)");
     } else {
