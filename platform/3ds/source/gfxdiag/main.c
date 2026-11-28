@@ -545,9 +545,12 @@ static int textured_stage(int mode) {
     AttrInfo_AddLoader(a, 1, GPU_FLOAT, 2);
     if (buffers(vbo, sizeof(vtex), 2, 0x10) != 0) return -1;
     base_state();
-    cp("C3D_TexBind(0) + texenv modulate%s", is_cube ? " + depth test" : "");
+    cp("C3D_TexBind(0) + texenv %s%s", mode == 3 ? "primary colour (texture not sampled)"
+                                                 : "modulate",
+       is_cube ? " + depth test" : "");
     C3D_TexBind(0, &tex);
-    env_texture();
+    if (mode == 3) env_colour();
+    else env_texture();
     if (is_cube) {
         C3D_DepthTest(true, GPU_GREATER, GPU_WRITE_ALL);
         Mtx_PerspTilt(&persp, C3D_AngleFromDegrees(80.0f), C3D_AspectRatioTop, 0.01f, 1000.0f,
@@ -556,7 +559,8 @@ static int textured_stage(int mode) {
     t.proj = is_cube ? &persp : &ortho;
     t.count = is_cube ? 36 : 6;
     t.spin = is_cube ? 0.03f : 0.0f;
-    rc = run_frames(draw_tex, &t, 0x68B0D8FFu);
+    /* mode 4: texture uploaded and bound, but nothing sampled: clear frames only. */
+    rc = mode == 4 ? run_frames(NULL, NULL, 0x68B0D8FFu) : run_frames(draw_tex, &t, 0x68B0D8FFu);
     if (!gpu_hung && gpu_idle_begin()) {
         C3D_TexBind(0, NULL);
         BufInfo_Init(C3D_GetBufInfo());
@@ -571,6 +575,8 @@ static int textured_stage(int mode) {
     return rc;
 }
 
+static int stage_tex_upload(void) { return textured_stage(4); }
+static int stage_tex_bind(void) { return textured_stage(3); }
 static int stage_texture(void) { return textured_stage(0); }
 static int stage_tex_vram(void) { return textured_stage(1); }
 static int stage_cube(void) { return textured_stage(2); }
@@ -641,7 +647,7 @@ static int stage_gx(void) {
 typedef struct { const char *name; int (*run)(void); } stage;
 static const stage stages[] = {
     {"clear", stage_clear},     {"clear-block", stage_clear_blocking}, {"imm-tri", stage_imm_tri}, {"vbo-tri", stage_vbo_tri},
-    {"vbo-rebase", stage_vbo_rebase}, {"attribs", stage_attribs}, {"depth", stage_depth},     {"texture", stage_texture},
+    {"vbo-rebase", stage_vbo_rebase}, {"attribs", stage_attribs}, {"depth", stage_depth},     {"tex-upload", stage_tex_upload}, {"tex-bind", stage_tex_bind}, {"texture", stage_texture},
     {"tex-vram", stage_tex_vram}, {"cube", stage_cube},     {"gx", stage_gx},
 };
 #define NSTAGES ((int)(sizeof stages / sizeof stages[0]))
