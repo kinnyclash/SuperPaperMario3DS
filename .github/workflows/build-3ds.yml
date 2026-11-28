@@ -47,6 +47,32 @@ jobs:
       - name: Build the graphics diagnostic (APP=gfxdiag)
         working-directory: platform/3ds
         run: make APP=gfxdiag EXTRA_CFLAGS=-Werror
+      # Crash-dump helper: maps the PC from a data-abort screen to its function. Only reads the
+      # ELF and prints to the log; the app itself is unchanged. Set CRASH_PC to the PC shown.
+      - name: Symbolize gfxdiag crash address
+        working-directory: platform/3ds
+        env:
+          CRASH_PC: "0x00109C4C"
+        run: |
+          elf=build-gfxdiag/spm3ds_gfxdiag.elf
+          nm=$DEVKITARM/bin/arm-none-eabi-nm
+          objdump=$DEVKITARM/bin/arm-none-eabi-objdump
+          python3 - "$elf" "$nm" "$CRASH_PC" <<'PY'
+          import subprocess, sys
+          elf, nm, pc = sys.argv[1], sys.argv[2], int(sys.argv[3], 16)
+          syms = []
+          for line in subprocess.check_output([nm, "-n", "-S", "--defined-only", elf], text=True).splitlines():
+              parts = line.split()
+              if len(parts) >= 4 and parts[-2] in "tTwW":
+                  syms.append((int(parts[0], 16), parts[-1]))
+          best = max((s for s in syms if s[0] <= pc), default=None)
+          print(f"PC {pc:#010x} is in {best[1]} + {pc - best[0]:#x}" if best else "no symbol")
+          print("nearby symbols:")
+          for addr, name in syms:
+              if abs(addr - pc) < 0x200:
+                  print(f"  {addr:#010x} {name}")
+          PY
+          "$objdump" -d --start-address=$((CRASH_PC - 0x40)) --stop-address=$((CRASH_PC + 0x20)) "$elf" || true
       # The game app needs translated game code, which only exists on the user's computer.
       # CI builds it from the stand-in game (tools/make_game_stub.py) to check that it links.
       - name: Build the game app with the stand-in game (APP=game)
