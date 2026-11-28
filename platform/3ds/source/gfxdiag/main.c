@@ -5,6 +5,7 @@
  * stage that times out names the feature that hangs:
  *
  *   1 clear        framebuffer clear only, no shader draw
+ *   1b clear-block the same clears with the blocking frame pattern (C3D_FrameBegin(0), GX_CMDLIST_FLUSH)
  *   2 imm-tri      one white triangle, minimal shader, immediate mode (no vertex buffer)
  *   3 vbo-tri      the same triangle from a vertex buffer (1 attribute, stride 12)
  *   4 vbo-rebase   vbo-tri with the buffer base address moved next to the buffer
@@ -303,6 +304,28 @@ static const v3 tri_verts[3] = {{200.0f, 200.0f, 0.5f}, {100.0f, 40.0f, 0.5f},
 
 static int stage_clear(void) {
     return run_frames(NULL, NULL, 0x3030C0FFu);   /* top screen: plain blue */
+}
+
+/* Same clears, but the frame pattern is the blocking one used by common 3DS renderers:
+ * C3D_FrameBegin(0) waits until the GPU queue is idle, and C3D_FrameEnd(GX_CMDLIST_FLUSH)
+ * flushes the command list at the end of each frame. This isolates whether the
+ * non-blocking start (or the lack of a flush) is what stalls the GPU. Written from the
+ * public citro3d API, not copied from any port. */
+static int stage_clear_blocking(void) {
+    int f;
+    note("-- blocking frame pattern: C3D_FrameBegin(0) / C3D_FrameEnd(GX_CMDLIST_FLUSH) --");
+    for (f = 0; f < FRAMES; f++) {
+        int verbose = f < 2;
+        if (verbose) cp("C3D_FrameBegin(0) (blocking)");
+        if (!C3D_FrameBegin(0)) { fail("C3D_FrameBegin(0) returned false"); return -1; }
+        C3D_FrameDrawOn(target);
+        C3D_RenderTargetClear(target, C3D_CLEAR_ALL, 0x30C030FFu, 0);
+        if (verbose) cp("C3D_FrameEnd(GX_CMDLIST_FLUSH)");
+        C3D_FrameEnd(GX_CMDLIST_FLUSH);
+        cp_time = osGetTime();
+    }
+    note("%d blocking frames finished (expect: green top screen)", FRAMES);
+    return 0;
 }
 
 typedef struct { s8 u_proj; } tri_ctx;
@@ -610,7 +633,7 @@ static int stage_gx(void) {
 
 typedef struct { const char *name; int (*run)(void); } stage;
 static const stage stages[] = {
-    {"clear", stage_clear},     {"imm-tri", stage_imm_tri}, {"vbo-tri", stage_vbo_tri},
+    {"clear", stage_clear},     {"clear-block", stage_clear_blocking}, {"imm-tri", stage_imm_tri}, {"vbo-tri", stage_vbo_tri},
     {"vbo-rebase", stage_vbo_rebase}, {"attribs", stage_attribs}, {"depth", stage_depth},     {"texture", stage_texture},
     {"tex-vram", stage_tex_vram}, {"cube", stage_cube},     {"gx", stage_gx},
 };
